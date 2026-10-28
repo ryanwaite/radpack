@@ -65,19 +65,45 @@ Radius version annotation proves that the application works on a cloud provider.
 
 ## Run from this repository
 
-Requires Node.js 22 or newer and Git. Install the locked archive-reader dependency;
-there is no build step.
+Requires Go 1.24 or newer to build and Git to operate on repositories. Radpack
+builds into a native executable; running that executable requires neither Go nor
+Node.js. The implementation uses only the Go standard library.
 
 ```bash
 git clone https://github.com/ryanwaite/radpack.git
 cd radpack
-npm ci --ignore-scripts
-node bin/radpack.mjs --help
+go build -o ./bin/radpack ./cmd/radpack
+./bin/radpack --help
 ```
 
-The commands below use `radpack` for readability. Run `npm link` to register that
-command locally, or substitute `node /path/to/radpack/bin/radpack.mjs`. This package
-has not been published to npm.
+On Windows, build with `go build -o .\bin\radpack.exe .\cmd\radpack`, then run
+`.\bin\radpack.exe --help`.
+
+To install this checkout's command into your Go executable directory:
+
+```bash
+go install ./cmd/radpack
+```
+
+That directory is `GOBIN` when configured, otherwise the `bin` directory under
+`GOPATH` (normally `$HOME/go/bin`). Add it to your shell's PATH if needed.
+Unlike `npm link`, `go install` copies a compiled executable; rerun it after
+changing the source. It does not modify PATH or publish a release.
+The commands below assume `radpack` is on PATH; otherwise use the built
+executable's path. No prebuilt release binaries are published yet.
+
+### Migrating from the initial JavaScript CLI
+
+The Go CLI preserves the commands, portable pack format v1, in-repository asset
+descriptors, and installation receipt formats v1/v2. Existing packs do not need
+conversion. Legacy v1 receipts still need the original pack directory for
+verification. Re-run `create --dry-run` after upgrading before approving an export;
+review hashes are implementation-specific and are not a persisted pack format.
+
+If you previously ran `npm link`, remove that old command link with
+`npm unlink --global @ryanwaite/radpack`, then install the Go executable above.
+Check your shell's command resolution to ensure it is not still using the old
+link. Node.js, npm, and JavaScript packages are no longer used by Radpack.
 
 ## Install an application's Radpack
 
@@ -375,8 +401,11 @@ returns zero but explicitly reports `adaptation-required`, not deployment readin
 ## Development and repository layout
 
 ```bash
-npm run check
-npm test
+go fmt ./...
+go vet ./...
+go test ./...
+go test -race ./...
+go build -o ./bin/radpack ./cmd/radpack
 ```
 
 Tests create temporary local Git repositories and redirect a fixture GitHub URL
@@ -384,21 +413,27 @@ to them. They exercise the real Git fetch/checkout path without network access o
 cloud credentials. CI runs the suite on Linux, macOS, and Windows.
 
 ```text
-bin/radpack.mjs       CLI entry point and error reporting
-src/cli.mjs           Command parsing and user-facing output
-src/discovery.mjs     Application, in-repository, override, and catalog discovery
-src/pack.mjs          Manifest validation, export, installation, and verification
-src/policy.mjs        Path rules, portability checks, archive inspection, dependencies
-src/git.mjs           Git operations and remote revision resolution
-src/adaptation.mjs    Human-guided Radius adaptation instructions
-catalog.json         Bundled application-to-pack mapping (initially empty)
-test/                Local Git integration tests and policy regression tests
-docs/pack-format.md  Manifest and receipt contracts
+cmd/radpack/main.go             Native CLI entry point and cancellation
+internal/radpack/cli.go         Command parsing and user-facing output
+internal/radpack/discovery.go   Application, override, and catalog discovery
+internal/radpack/pack.go        Pack validation and reviewed export
+internal/radpack/install.go     Installation, verification, adaptation handoffs
+internal/radpack/types.go       Typed wire contracts and strict JSON parsing
+internal/radpack/policy.go      Path rules, content checks, archive inspection
+internal/radpack/git.go         Git operations and remote revision resolution
+internal/radpack/*_test.go      Native CLI, local Git, and policy regressions
+catalog.go / catalog.json       Catalog embedded into the native executable
+docs/pack-format.md             Manifest and receipt contracts
 ```
 
-The implementation uses Node.js ES modules and the built-in test runner, with a
-locked TAR-reader dependency for inspecting custom-type packages. `npm pack
---dry-run --ignore-scripts` previews the distributable package without publishing.
+Go's `archive/tar` and `compress/gzip` inspect custom-type packages without
+extracting them. There are no third-party Go dependencies or runtime package
+installation steps. The catalog is embedded at build time, so moving the
+executable does not break discovery.
+
+The CLI still uses the installed Git executable and Radius remains a separate
+tool. Sharing Go with Radius enables future integration; this migration does not
+import Radius internals or invoke Radius during installation.
 
 ## Next milestone
 

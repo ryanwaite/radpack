@@ -1,6 +1,8 @@
 # Contributing
 
-Run `npm ci --ignore-scripts`, `npm run check`, and `npm test` before proposing CLI changes. Keep the CLI free
+Use Go 1.24 or newer and Git. Run `go fmt ./...`, `go vet ./...`, and
+`go test ./...` before proposing CLI changes; run `go test -race ./...` for
+concurrency checks. Keep the CLI free
 of cloud side effects: create/install/verify must not provision environments,
 register credentials, run payload scripts, or deploy.
 

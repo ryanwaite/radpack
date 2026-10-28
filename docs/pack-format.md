@@ -215,7 +215,15 @@ credentials, and application secrets through Radius.
 Reusable recipe definitions and required inputs may be included. Concrete
 environment resources, generated provider-pack copies, credentials, state, and
 deployment-specific parameter values must not be included. The parser and policy
-in `src/pack.mjs` and `src/policy.mjs` are authoritative for format v1.
+in `internal/radpack/pack.go`, `internal/radpack/types.go`, and
+`internal/radpack/policy.go` are authoritative for format v1. The native Go
+implementation reads the same pack and receipt formats as the original JavaScript
+CLI. JSON parsers reject duplicate keys, unknown fields, missing required fields,
+and invalid field types; raw JSON values are not echoed in errors.
+
+Review approval hashes are temporary approvals for the current CLI's preview,
+not part of the portable manifest contract. Re-run the preview after upgrading
+implementations before approving an export.
 
 Custom-type `.tgz` payloads are carried intact but inspected without extraction
 before export/import. Members must be safe, non-sensitive UTF-8 regular files or

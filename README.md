@@ -3,12 +3,13 @@
 **Set up cloud-native apps, explore their architecture, and deploy to your cloud
 of choice with Radius.**
 
-Radpack brings existing GitHub applications together with Radius application
+Radpack brings existing cloud native applications together with Radius application
 graphs, reusable recipes, and tools. Install a pack, see how the application fits
-together in Radius Canvas, then use Radius to configure your environment and deploy.
+together in the GitHub Copilot App with Radius Canvas, then use Radius to configure 
+your environment and deploy.
 
 Authors prepare and verify an application with Radius, then package it for others
-to use. Radpack captures that **manually prepared Radius application** and installs it over
+to use. Radpack captures that **prepared Radius application** and installs it over
 an exact revision of its original GitHub repository. It distributes the application
 model, reusable recipes, and reviewed source adaptations, **not the author's
 credentials or deployment environment**.

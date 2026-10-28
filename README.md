@@ -87,23 +87,10 @@ go install ./cmd/radpack
 
 That directory is `GOBIN` when configured, otherwise the `bin` directory under
 `GOPATH` (normally `$HOME/go/bin`). Add it to your shell's PATH if needed.
-Unlike `npm link`, `go install` copies a compiled executable; rerun it after
+`go install` copies a compiled executable; rerun it after
 changing the source. It does not modify PATH or publish a release.
 The commands below assume `radpack` is on PATH; otherwise use the built
 executable's path. No prebuilt release binaries are published yet.
-
-### Migrating from the initial JavaScript CLI
-
-The Go CLI preserves the commands, portable pack format v1, in-repository asset
-descriptors, and installation receipt formats v1/v2. Existing packs do not need
-conversion. Legacy v1 receipts still need the original pack directory for
-verification. Re-run `create --dry-run` after upgrading before approving an export;
-review hashes are implementation-specific and are not a persisted pack format.
-
-If you previously ran `npm link`, remove that old command link with
-`npm unlink --global @ryanwaite/radpack`, then install the Go executable above.
-Check your shell's command resolution to ensure it is not still using the old
-link. Node.js, npm, and JavaScript packages are no longer used by Radpack.
 
 ## Install an application's Radpack
 

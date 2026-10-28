@@ -1,3 +1,11 @@
+/bin/
+/dist/
+/radpack
+/radpack.exe
+*.test
+*.test.exe
+coverage.out
+# Leftovers from the original JavaScript implementation are not source assets.
 node_modules/
 *.tgz
 coverage/

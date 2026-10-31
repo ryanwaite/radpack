@@ -45,8 +45,22 @@ The manifest has this shape (hash placeholders below are illustrative):
 }
 ```
 
-`radiusVersion` is an optional author-provided release annotation, represented as
-`null` when unspecified. It is not an automatically verified compatibility claim.
+`radiusVersion` is a nullable release annotation. Create infers it from the
+nearest compiler configuration's `extensions.radius` registry tag. If that does
+not identify an exact release, a sibling `app.origin.json` can supply it only when
+its `appBicepHash` matches the model bytes. A compiler pin takes precedence when
+the two sources disagree. An explicit `--radius-version` (or non-null version in
+an in-repository descriptor) overrides detection with a visible warning on conflict.
+
+Mutable tags and local extension paths are not exact release evidence. When no
+exact release can be established, the field remains `null`. Detection sources,
+origin status, and warnings appear in the export review, not as new portable
+manifest fields. They are included in the review approval hash. Existing v1
+manifests remain readable without conversion.
+
+Install compares the annotation with the local Radius CLI release and reports
+differences as warnings only. Missing or unverifiable local versions never prevent
+installation. The annotation is not an automatically verified compatibility claim.
 The application path must be `.radius/app.bicep` or `app.bicep`.
 
 Every selected file has a `before` fingerprint from the upstream Git blob and an
@@ -72,9 +86,22 @@ Git short-name aliases, and overlapping file/parent paths are prohibited.
 ## Review and integrity
 
 The preview's approval SHA covers the manifest, excluded-file inventory,
-unselected-file inventory, and policy blockers. Publication rechecks that SHA and
+unselected-file inventory, policy blockers, Radius version evidence, and
+build-source warnings. Publication rechecks that SHA and
 the selected payload fingerprints. A fresh create invocation recomputes the review
 from the current working tree; a prior approval cannot silently approve new bytes.
+
+Interactive confirmation uses that same review hash internally. The CLI
+recalculates the review after the user's answer and refuses to write if its
+contents changed. `--dry-run` and noninteractive previews expose the hash for
+explicit `--approve` use. Input and output must both be terminals for prompts;
+EOF and the default answer cancel the export.
+
+The CLI can infer the source commit from a published checkout HEAD. It verifies
+fetchability in a scratch Git database before proposing the pack. Multiple
+source repositories and unconfirmed local commits require an explicit choice
+(flags in automation, questions in a terminal). The portable manifest still
+records a canonical repository URL and exact commit, not a mutable branch name.
 
 Payloads are full resulting files, not patches. Original content is represented
 only by its fingerprint, so deleting a credential from a source file does not

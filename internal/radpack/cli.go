@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
+	"os"
 	"strings"
 )
 
 const help = `Radpack - set up cloud-native apps, explore their architecture, and deploy to your cloud of choice with Radius
 
-  radpack create --base <full-sha> [--source <repo>] [--output <pack-directory>]
+  radpack create [--base <full-sha>] [--source <repo>] [--output <pack-directory>]
                  [--upstream <owner/repo>] [--name <name>] [--include <file>]...
                  [--radius-version <version>] [--dry-run | --approve <review-sha>]
   radpack inspect <pack-directory>
@@ -19,12 +19,15 @@ const help = `Radpack - set up cloud-native apps, explore their architecture, an
                   [--latest --adapt]
   radpack verify [<pack-directory>] --directory <installed-directory>
 
-Create previews the inventory without writing until --approve matches its review.
+Create infers a published source revision and asks before saving in a terminal.
+Noninteractive create only previews unless --approve matches the review SHA.
 Output defaults to ./contrib/<pack-name>. Existing destinations are never reused.
 Install never creates Radius environments, executes pack scripts, or deploys.
 Install defaults to the pack's reference commit. --latest --adapt prepares a
 Radius authoring handoff, NOT an automatically adapted or deployment-ready app.
 Verify checks file reproduction, not Radius compilation or cloud functionality.
+Create detects Radius releases from compiler pins and matching origin records.
+Install warns about local Radius version mismatches; it does not block or upgrade.
 `
 
 // Keep interspersed flags and repeated --include compatible with the original
@@ -81,14 +84,18 @@ func parseOptions(command string, args []string) (map[string][]string, []string,
 }
 
 func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
-	err := run(ctx, args, out)
+	err := runWithUI(ctx, args, out, localRadiusVersion, terminalUI(os.Stdin, out))
 	if err != nil {
 		fmt.Fprintf(errOut, "radpack: %s\n", err)
 		return 1
 	}
 	return 0
 }
-func run(ctx context.Context, args []string, out io.Writer) error {
+func run(ctx context.Context, args []string, out io.Writer, probe radiusVersionProbe) error {
+	return runWithUI(ctx, args, out, probe, nil)
+}
+
+func runWithUI(ctx context.Context, args []string, out io.Writer, probe radiusVersionProbe, ui *createUI) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
 		_, err := io.WriteString(out, help)
 		return err
@@ -108,58 +115,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		if len(positions) > 0 {
 			return fmt.Errorf("create takes options, not positional arguments")
 		}
-		if get("approve") != "" && get("dry-run") != "" {
-			return fmt.Errorf("use --dry-run or --approve, not both")
-		}
-		var version *string
-		if _, ok := values["radius-version"]; ok {
-			s := get("radius-version")
-			version = &s
-		}
-		p, err := PlanCreate(ctx, CreateOptions{get("source"), get("base"), get("upstream"), get("name"), version, values["include"]})
-		if err != nil {
-			return err
-		}
-		output := get("output")
-		if output == "" {
-			output = filepath.Join("contrib", p.Manifest.Name)
-		}
-		output, err = filepath.Abs(output)
-		if err != nil {
-			return err
-		}
-		versionLabel := "unspecified; inspect the included Bicep configuration"
-		if p.Manifest.RadiusVersion != nil {
-			versionLabel = *p.Manifest.RadiusVersion
-		}
-		fmt.Fprintf(out, "Pack: %s\nUpstream: %s@%s\nOutput: %s\nRadius release annotation: %s\n\nSelected files:\n", p.Manifest.Name, p.Manifest.Upstream.Repository, p.Manifest.Upstream.Commit, output, versionLabel)
-		for _, file := range p.Manifest.Files {
-			fmt.Fprintf(out, "  %-7s %s\n", file.Operation, file.Path)
-		}
-		if len(p.Excluded) > 0 {
-			fmt.Fprintln(out, "\nExcluded:")
-			for _, file := range p.Excluded {
-				fmt.Fprintf(out, "  %q: %s\n", file.Path, file.Reason)
-			}
-		}
-		if len(p.Unselected) > 0 {
-			fmt.Fprintln(out, "\nNot selected (use --include <file> for a required application change):")
-			for _, file := range p.Unselected {
-				fmt.Fprintf(out, "  %q\n", file)
-			}
-		}
-		if len(p.Blockers) > 0 {
-			return fmt.Errorf("export blocked:\n  %s", strings.Join(p.Blockers, "\n  "))
-		}
-		if get("approve") != "" {
-			if _, err := WritePack(p, output, get("approve")); err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "\nCreated %s. Cloud deployment status: unverified by Radpack.\n", output)
-		} else {
-			fmt.Fprintf(out, "\nReview SHA: %s\nNo files written. Review the selected file contents, then repeat without --dry-run and add --approve <review-sha>.\nSecret detection is best-effort, not a guarantee. No deployment verification is implied.\n", p.Approval)
-		}
-		return nil
+		return createCommand(ctx, values, out, ui)
 	}
 	if (command == "verify" && len(positions) > 1) || (command != "verify" && len(positions) != 1) {
 		return fmt.Errorf("%s requires one target (optional for verify)", command)
@@ -186,7 +142,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	case "install":
 		result, err := InstallApplication(ctx, target, ApplicationOptions{Directory: get("directory"), Pack: get("pack"), PackPath: get("pack-path"),
-			Latest: get("latest") != "", Adapt: get("adapt") != ""}, func(s string) { fmt.Fprintln(out, s) })
+			Latest: get("latest") != "", Adapt: get("adapt") != "", VersionProbe: probe}, func(s string) { fmt.Fprintln(out, s) })
 		if err != nil {
 			return err
 		}

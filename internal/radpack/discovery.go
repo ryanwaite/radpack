@@ -34,6 +34,7 @@ type ApplicationOptions struct {
 	Directory, Pack, PackPath string
 	Latest, Adapt             bool
 	Catalog                   []byte
+	VersionProbe              radiusVersionProbe
 }
 type ApplicationResult struct {
 	Directory, Status, ReferenceCommit, SelectedCommit string
@@ -309,6 +310,21 @@ func InstallApplication(ctx context.Context, target string, o ApplicationOptions
 	output, err := InstallPack(ctx, resolved.Directory, o.Directory, InstallOptions{selected, o.Adapt, resolved.Source})
 	if err != nil {
 		return nil, err
+	}
+	if report != nil {
+		_, evidence, versionErr := detectRadiusVersion(output, p.Manifest.Application, p.Manifest.RadiusVersion)
+		if versionErr != nil {
+			report("Warning: Could not inspect installed model version evidence. Installation is complete; review the model before deploying.")
+		} else {
+			for _, warning := range evidence.Warnings {
+				report("Warning: " + warning)
+			}
+		}
+		if o.VersionProbe != nil {
+			for _, warning := range radiusInstallWarnings(ctx, p.Manifest.RadiusVersion, o.VersionProbe) {
+				report("Warning: " + warning)
+			}
+		}
 	}
 	status := "installed"
 	if o.Adapt {

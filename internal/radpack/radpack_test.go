@@ -792,7 +792,11 @@ func TestCLI(t *testing.T) {
 	f := newFixture(t, false)
 	invoke := func(args ...string) (int, string, string) {
 		var out, errOut bytes.Buffer
-		code := Run(ctx, args, &out, &errOut)
+		code := 0
+		if err := run(ctx, args, &out, func(context.Context) (string, error) { return "0.60.0", nil }); err != nil {
+			code = 1
+			errOut.WriteString(err.Error())
+		}
 		return code, out.String(), errOut.String()
 	}
 	code, out, errs := invoke("create", "--source", f.source, "--base", f.base, "--output", f.pack, "--dry-run")
@@ -846,6 +850,9 @@ func TestNativeExecutable(t *testing.T) {
 	}
 	command := exec.Command(executable, "install", "radpack-fixture/app", "--pack", f.pack)
 	command.Dir = f.root
+	// Use a harmless executable that rejects the version query, never the
+	// developer's real Radius installation.
+	command.Env = append(os.Environ(), "RADIUS_RAD_BINARY="+executable)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("native install: %s: %v", output, err)
 	}

@@ -179,6 +179,9 @@ type CreateOptions struct {
 	Source, Base, Upstream, Name string
 	RadiusVersion                *string
 	Include                      []string
+	// BaselineRoot is a verified scratch Git database, used when the published
+	// baseline is not present in the author's object database.
+	BaselineRoot string
 }
 
 func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
@@ -192,7 +195,11 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 	if !commitPattern.MatchString(o.Base) {
 		return nil, fmt.Errorf("--base must be the full 40-character upstream commit SHA")
 	}
-	resolved, err := gitText(ctx, source, "rev-parse", "--verify", o.Base+"^{commit}")
+	baselineRoot := source
+	if o.BaselineRoot != "" {
+		baselineRoot = o.BaselineRoot
+	}
+	resolved, err := gitText(ctx, baselineRoot, "rev-parse", "--verify", o.Base+"^{commit}")
 	if err != nil {
 		return nil, err
 	}
@@ -258,14 +265,18 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 		}
 		add(file)
 	}
-	tree, err := treeAt(ctx, source, o.Base)
+	tree, err := treeAt(ctx, baselineRoot, o.Base)
 	if err != nil {
 		return nil, err
 	}
 	p := &Plan{Review: Review{
 		Manifest: Manifest{1, name, Upstream{repository, o.Base}, app, o.RadiusVersion, []FileOperation{}},
-		Excluded: []Excluded{}, Unselected: []string{}, Blockers: []string{},
+		Excluded: []Excluded{}, Unselected: []string{}, Blockers: []string{}, BuildWarnings: []string{},
 	}, Payloads: map[string][]byte{}}
+	if err := validateUpstreamTree(tree); err != nil {
+		p.Blockers = append(p.Blockers, err.Error())
+	}
+	buildAssets := map[string][]byte{}
 	total := 0
 	for i := 0; i < len(selected); i++ {
 		if len(selected) > 1000 {
@@ -280,7 +291,7 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 			if reason != "" {
 				return fmt.Errorf("cannot package %s: %s", file, reason)
 			}
-			original, err := baseFile(ctx, source, tree, file)
+			original, err := baseFile(ctx, baselineRoot, tree, file)
 			if err != nil {
 				return err
 			}
@@ -322,6 +333,7 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 				if total > maxPackBytes {
 					return fmt.Errorf("selected files exceed the 32 MiB pack limit")
 				}
+				buildAssets[file] = current.Bytes
 			}
 			before, after := fingerprint(original), fingerprint(current)
 			op := "replace"
@@ -344,21 +356,45 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 		}
 	}
 	sort.Slice(p.Manifest.Files, func(i, j int) bool { return p.Manifest.Files[i].Path < p.Manifest.Files[j].Path })
+	p.BuildWarnings = buildSourceWarnings(p.Manifest, buildAssets)
+	version, evidence, err := detectRadiusVersion(source, app, o.RadiusVersion)
+	if err != nil {
+		p.Blockers = append(p.Blockers, err.Error())
+	} else {
+		p.Manifest.RadiusVersion = version
+		p.RadiusEvidence = evidence
+	}
 	if len(p.Blockers) == 0 {
 		if err := validateManifest(p.Manifest); err != nil {
 			return nil, err
 		}
 	}
 	candidates := map[string]bool{}
+	diffArgs := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", o.Base, "--"}
+	if o.BaselineRoot != "" {
+		diffArgs = append([]string{"--work-tree=" + source}, diffArgs...)
+	}
+	changed, err := git(ctx, baselineRoot, diffArgs...)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range splitNull(changed) {
+		candidates[file] = true
+	}
 	for _, args := range [][]string{
-		{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", o.Base, "--"},
 		{"ls-files", "--others", "--exclude-standard", "-z"},
+		{"ls-files", "--cached", "-z"},
 	} {
 		b, err := git(ctx, source, args...)
 		if err != nil {
 			return nil, err
 		}
 		for _, file := range splitNull(b) {
+			if args[1] == "--cached" {
+				if _, exists := tree[file]; exists {
+					continue
+				}
+			}
 			candidates[file] = true
 		}
 	}

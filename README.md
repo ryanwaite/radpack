@@ -3,22 +3,51 @@
 **Set up cloud-native applications, explore their architecture, and deploy to
 your cloud of choice with Radius.**
 
-Radpack distributes the work that makes an application ready for Radius: its
-application model, reusable recipes, and any required source or configuration
-changes. An author prepares the application once. Other people install that
-integration, inspect its graph in the GitHub Copilot App with Radius Canvas,
-and deploy using their own Radius environments.
+## Try an application
 
-A pack describes the application. It does not carry the author's credentials,
-cluster settings, or deployment state.
+For an application with a published Radpack:
 
-Radpack is an early Go CLI. It supports reviewed pack creation, application-based
-discovery, reproducible installation, and a handoff for adapting a pack to newer
-source. The bundled catalog is currently empty. The examples below illustrate
-the commands; they do not imply that a pack for a particular application has
-already been published or deployment-tested.
+```bash
+radpack install owner/application
+```
 
-## Install the CLI
+Open the installed checkout in the GitHub Copilot App with Radius Canvas.
+Explore the application graph, create your own Radius environment, and deploy
+through the Radius tools.
+
+Radpack finds the integration and installs the application revision it was
+prepared for. You supply your own environment and credentials.
+
+## Share an application
+
+Already prepared an application with Radius? Run this from its checkout:
+
+```bash
+radpack create
+```
+
+Radpack proposes the source revision, detects the Radius version, and shows what
+the pack will contain. Select any additional application changes, then confirm:
+
+```text
+Create this pack? [y/N]
+```
+
+No initialization step or advance recordkeeping is required. Radpack saves the
+pack under `contrib/<application-name>` by default. Creating a pack does not
+certify that it has been deployment-tested.
+
+**Early development:** the bundled catalog is currently empty. You can install
+a local pack or point to a separately hosted pack. `owner/application` is a
+placeholder for an application with a published integration, not an available
+sample.
+
+New here? [Install the CLI](#install-the-radpack-cli), then
+[try a local pack](#try-your-first-local-pack).
+For additional options, see [pack creation](#create-options-and-review),
+[installation](#install-options-and-discovery), or the [command reference](#command-reference).
+
+## Install the Radpack CLI
 
 You need Go 1.24 or newer to build Radpack, and Git to use it.
 
@@ -47,7 +76,48 @@ Prebuilt release binaries are not yet published.
 Radius and its Canvas tools are separate prerequisites for modeling,
 visualization, and deployment. Radpack does not install them.
 
-## Create a pack from a prepared application
+## Try your first local pack
+
+Start with an application checkout that already contains a Radius model and
+has access to its source repository. With Radpack installed, run:
+
+```bash
+cd /path/to/prepared-app
+radpack create --output ../my-app-pack
+```
+
+Review the proposed files and source revision, select required application
+changes, and answer yes to save. Both commands below use the pack you just
+created, so they do not need a catalog entry:
+
+```bash
+radpack install ../my-app-pack --directory ../my-app-test
+radpack verify --directory ../my-app-test
+```
+
+Choose new paths for `my-app-pack` and `my-app-test`; Radpack does not overwrite
+existing directories. Installation needs access to the recorded source
+repository. In a script or redirected terminal, use the
+[preview and approval flow](#preview-and-automation) instead of confirmation.
+
+Open `my-app-test` in the GitHub Copilot App with Radius Canvas. You now have a
+fresh application checkout with its Radius integration. Set up your own Radius
+environment before deploying. `verify` checks the installed files, not whether
+the application runs successfully in a cloud.
+
+## How Radpack works
+
+A pack combines an application's source revision with its reusable Radius
+integration: the application model, recipes, and reviewed source adaptations.
+It can live separately from the application or point to assets already committed
+in the application's repository.
+
+Radpack installs those files and records exactly which revisions it used.
+Radius renders the graph, configures the consumer's environment, and deploys
+the application. The author's credentials, cluster settings, and deployment
+state stay out of the pack.
+
+## Create options and review
 
 Prepare the application however you normally work. Generate and inspect its
 Radius model, make the required adaptations, and test deployment in your own
@@ -174,7 +244,7 @@ Radpack checks the chosen source revision as well as the selected assets for
 known Radius environment artifacts. Excluding a file from the overlay is not
 enough if cloning the source would restore it.
 
-## Install an application's pack
+## Install options and discovery
 
 Name the application you want:
 

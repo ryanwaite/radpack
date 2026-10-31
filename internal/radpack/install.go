@@ -52,21 +52,8 @@ func InstallPack(ctx context.Context, packDirectory, destination string, o Insta
 		if err != nil {
 			return err
 		}
-		for file := range selectedTree {
-			lower := strings.ToLower(file)
-			if (lower == ".radpack" || strings.HasPrefix(lower, ".radpack/")) && file != ".radpack/radpack.json" {
-				return fmt.Errorf("upstream uses reserved Radpack installation metadata paths")
-			}
-			if strings.HasPrefix(lower, ".radius/") || strings.HasPrefix(lower, ".rad/") || strings.HasPrefix(lower, ".kube/") ||
-				lower == ".radius-credentials.json" || lower == ".radius-target-kubeconfig" {
-				reason, err := excludedReason(file)
-				if err != nil {
-					return err
-				}
-				if reason != "" {
-					return fmt.Errorf("upstream contains non-portable Radius environment material: %q", file)
-				}
-			}
+		if err := validateUpstreamTree(selectedTree); err != nil {
+			return err
 		}
 		if _, ok := selectedTree[".radpack/radpack.json"]; ok {
 			if _, err := readRegular(output, ".radpack/radpack.json"); err != nil {

@@ -11,12 +11,13 @@ register credentials, run payload scripts, or deploy.
 Start with a manually prepared application. Do not submit a generated graph or
 untested model as though it were a deployment-verified pack.
 
-1. Record the upstream repository and full baseline commit before preparation.
+1. Choose the application repository consumers should clone.
 2. Create the Radius model, reusable recipes, and any application adaptations.
    Keep the environment identifier and credentials as deployment inputs.
 3. Verify the application in your author environment using the Radius tools.
-4. Run `radpack create --dry-run`, explicitly include required adaptations, inspect
-   the proposed files, and export with the resulting approval SHA.
+4. Run `radpack create` in a terminal. Review the inferred published revision,
+   select any required application adaptations, and confirm the export.
+   For automation, use `--dry-run`, explicit selections, and `--approve`.
 5. Install into a new directory and run `radpack verify` before building.
 6. Use a separate consumer environment and a repository you control to test the
    installed application's graph, build, deployment, and primary user journey.
@@ -56,6 +57,12 @@ must contain the source adaptations the application needs.
 No real application pack is included until this fresh-environment workflow has
 been completed. Do not treat the synthetic test fixture as a runnable Radius
 application or proof of cloud compatibility.
+
+Create verifies source revisions in a scratch Git database, not the author's
+checkout. Keep prompts terminal-only and confirmation default-no. Tests should
+cover redirected streams, EOF/cancellation, local-only commits, fork ambiguity,
+and file changes during review. Never assume that `main` is the default branch
+or that all differences from upstream belong in a pack.
 
 ## Updating a pack to newer source
 

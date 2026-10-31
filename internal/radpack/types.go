@@ -51,10 +51,12 @@ type Excluded struct {
 	Reason string `json:"reason"`
 }
 type Review struct {
-	Manifest   Manifest   `json:"manifest"`
-	Excluded   []Excluded `json:"excluded"`
-	Unselected []string   `json:"unselected"`
-	Blockers   []string   `json:"blockers"`
+	Manifest       Manifest        `json:"manifest"`
+	Excluded       []Excluded      `json:"excluded"`
+	Unselected     []string        `json:"unselected"`
+	Blockers       []string        `json:"blockers"`
+	RadiusEvidence VersionEvidence `json:"radiusEvidence"`
+	BuildWarnings  []string        `json:"buildWarnings"`
 }
 type Plan struct {
 	Review

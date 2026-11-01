@@ -401,7 +401,9 @@ func TestHandoffLongStatePaths(t *testing.T) {
 	check(t, err)
 	// The final state path includes a 64-character clone key. On Windows it can
 	// cross MAX_PATH after the shorter preparation directory is renamed.
-	home = filepath.Join(home, strings.Repeat("a", 70), strings.Repeat("b", 70), "home")
+	// Keep the initial Git working directory below MAX_PATH, then cross the
+	// boundary in the renamed state's file paths, as the original failure did.
+	home = filepath.Join(home, strings.Repeat("a", max(1, 160-len(home)-6)), "home")
 	check(t, os.MkdirAll(home, 0700))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -412,6 +414,11 @@ func TestHandoffLongStatePaths(t *testing.T) {
 	g(t, f.destination, "worktree", "add", "--quiet", "-b", "long-state", worktree, f.base)
 	status, err := HandoffStatusFor(ctx, worktree)
 	check(t, err)
+	state, err := loadHandoff(ctx, worktree)
+	check(t, err)
+	if len(filepath.Join(state.directory, "candidate", ".radius", "bicepconfig.json")) <= 260 {
+		t.Fatal("fixture did not exercise a file path beyond MAX_PATH")
+	}
 	if status.Status != "pending" {
 		t.Fatal(status)
 	}

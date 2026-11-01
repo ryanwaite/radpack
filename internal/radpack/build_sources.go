@@ -9,6 +9,10 @@ import (
 )
 
 func validateUpstreamTree(tree map[string]treeEntry) error {
+	return validateUpstreamTreeForIntegration(tree, nil)
+}
+
+func validateUpstreamTreeForIntegration(tree map[string]treeEntry, integration *IntegrationAssets) error {
 	for _, file := range sortedKeys(tree) {
 		lower := strings.ToLower(file)
 		if (lower == ".radpack" || strings.HasPrefix(lower, ".radpack/")) && file != ".radpack/radpack.json" {
@@ -18,7 +22,7 @@ func validateUpstreamTree(tree map[string]treeEntry) error {
 			lower == ".radius-credentials.json" || lower == ".radius-target-kubeconfig" ||
 			path.Base(lower) == "radius-environment.bicep" || path.Base(lower) == "radius-recipe-pack.bicep" ||
 			lower == "app-graph.json" {
-			reason, err := excludedReason(file)
+			reason, err := integrationExcludedReason(file, integration)
 			if err != nil {
 				return err
 			}
@@ -44,6 +48,9 @@ func buildSourceWarnings(manifest Manifest, assets map[string][]byte) []string {
 	pattern := regexp.MustCompile(`git::[^'"\s]+`)
 	for _, file := range sortedKeys(assets) {
 		if !strings.HasSuffix(file, ".bicep") {
+			continue
+		}
+		if integrationRole(file, manifest.Integration) != "" {
 			continue
 		}
 		for _, raw := range pattern.FindAllString(string(assets[file]), -1) {

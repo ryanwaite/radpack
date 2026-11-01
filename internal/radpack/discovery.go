@@ -14,12 +14,13 @@ import (
 )
 
 type assetManifest struct {
-	FormatVersion int      `json:"formatVersion"`
-	Kind          string   `json:"kind"`
-	Name          string   `json:"name"`
-	Application   string   `json:"application"`
-	RadiusVersion *string  `json:"radiusVersion"`
-	Assets        []string `json:"assets"`
+	FormatVersion int                `json:"formatVersion"`
+	Kind          string             `json:"kind"`
+	Name          string             `json:"name"`
+	Application   string             `json:"application"`
+	RadiusVersion *string            `json:"radiusVersion"`
+	Assets        []string           `json:"assets"`
+	Integration   *IntegrationAssets `json:"integration,omitempty"`
 }
 type catalog struct {
 	FormatVersion int               `json:"formatVersion"`
@@ -35,6 +36,7 @@ type ApplicationOptions struct {
 	Latest, Adapt             bool
 	Catalog                   []byte
 	VersionProbe              radiusVersionProbe
+	Desktop                   bool
 }
 type ApplicationResult struct {
 	Directory, Status, ReferenceCommit, SelectedCommit string
@@ -99,7 +101,9 @@ func repositoryPack(ctx context.Context, checkout, commit, repo, manifestPath, t
 	if err := decodeStrict(file.Bytes, &descriptor); err != nil {
 		return nil, err
 	}
-	if descriptor.FormatVersion != 1 || descriptor.Kind != "in-repository" || len(descriptor.Assets) > 1000 {
+	if (descriptor.FormatVersion != 1 && descriptor.FormatVersion != 2) || descriptor.Kind != "in-repository" || len(descriptor.Assets) > 1000 ||
+		(descriptor.FormatVersion == 1 && descriptor.Integration != nil) ||
+		(descriptor.FormatVersion == 2 && descriptor.Integration == nil) {
 		return nil, fmt.Errorf("invalid in-repository manifest")
 	}
 	hasApp := false
@@ -114,8 +118,13 @@ func repositoryPack(ctx context.Context, checkout, commit, repo, manifestPath, t
 	if !hasApp {
 		return nil, fmt.Errorf("assets must contain the application")
 	}
-	p, err := PlanCreate(ctx, CreateOptions{Source: checkout, Base: commit, Upstream: repo, Name: descriptor.Name,
-		RadiusVersion: descriptor.RadiusVersion, Include: descriptor.Assets})
+	options := CreateOptions{Source: checkout, Base: commit, Upstream: repo, Name: descriptor.Name,
+		RadiusVersion: descriptor.RadiusVersion, Include: descriptor.Assets}
+	if descriptor.Integration != nil {
+		options.Recipes = descriptor.Integration.Recipes
+		options.RecipePacks = descriptor.Integration.RecipePacks
+	}
+	p, err := PlanCreate(ctx, options)
 	if err != nil {
 		return nil, err
 	}
@@ -307,11 +316,15 @@ func InstallApplication(ctx context.Context, target string, o ApplicationOptions
 		}
 		report("Pack source: " + strings.TrimSpace(string(b)) + "\nOnly install packs from publishers you trust.")
 	}
-	output, err := InstallPack(ctx, resolved.Directory, o.Directory, InstallOptions{selected, o.Adapt, resolved.Source})
+	install := InstallPack
+	if o.Desktop {
+		install = PrepareDesktopInstall
+	}
+	output, err := install(ctx, resolved.Directory, o.Directory, InstallOptions{selected, o.Adapt, resolved.Source})
 	if err != nil {
 		return nil, err
 	}
-	if report != nil {
+	if report != nil && !o.Desktop {
 		_, evidence, versionErr := detectRadiusVersion(output, p.Manifest.Application, p.Manifest.RadiusVersion)
 		if versionErr != nil {
 			report("Warning: Could not inspect installed model version evidence. Installation is complete; review the model before deploying.")
@@ -320,15 +333,18 @@ func InstallApplication(ctx context.Context, target string, o ApplicationOptions
 				report("Warning: " + warning)
 			}
 		}
-		if o.VersionProbe != nil {
-			for _, warning := range radiusInstallWarnings(ctx, p.Manifest.RadiusVersion, o.VersionProbe) {
-				report("Warning: " + warning)
-			}
+	}
+	if report != nil && o.VersionProbe != nil {
+		for _, warning := range radiusInstallWarnings(ctx, p.Manifest.RadiusVersion, o.VersionProbe) {
+			report("Warning: " + warning)
 		}
 	}
 	status := "installed"
 	if o.Adapt {
 		status = "adaptation-required"
+	}
+	if o.Desktop {
+		status = "handoff-pending"
 	}
 	return &ApplicationResult{output, status, p.Manifest.Upstream.Commit, selected, resolved.Source}, nil
 }

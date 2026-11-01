@@ -12,11 +12,17 @@ const help = `Radpack - set up cloud-native apps, explore their architecture, an
 
   radpack create [--base <full-sha>] [--source <repo>] [--output <pack-directory>]
                  [--upstream <owner/repo>] [--name <name>] [--include <file>]...
-                 [--radius-version <version>] [--dry-run | --approve <review-sha>]
+                 [--recipe <file>]... [--recipe-pack <file>]...
+                 [--radius-version <version>] [--dry-run | --approve <review-sha>] [--json]
   radpack inspect <pack-directory>
+  radpack report <pack-directory>
+  radpack report --directory <installed-directory>
   radpack install <owner/repo|github-url|pack-directory> [--directory <new-directory>]
                   [--pack <local-directory|github-tree-url> | --pack-path <repo-directory>]
-                  [--latest --adapt]
+                  [--latest --adapt] [--no-open]
+  radpack open --directory <prepared-source-directory>
+  radpack handoff status --directory <session-worktree> --json
+  radpack handoff apply --directory <session-worktree> --request-id <id> --approve <review-sha> --json
   radpack verify [<pack-directory>] --directory <installed-directory>
 
 Create infers a published source revision and asks before saving in a terminal.
@@ -28,15 +34,21 @@ Radius authoring handoff, NOT an automatically adapted or deployment-ready app.
 Verify checks file reproduction, not Radius compilation or cloud functionality.
 Create detects Radius releases from compiler pins and matching origin records.
 Install warns about local Radius version mismatches; it does not block or upgrade.
+Default install prepares a clean clone and opens a Copilot App session draft.
+Start the session, then approve applying the pack in Radius. --no-open installs
+directly without launching the app. Plugin setup and sign-in remain user actions.
 `
 
 // Keep interspersed flags and repeated --include compatible with the original
 // CLI without adding a runtime or external command framework dependency.
 func parseOptions(command string, args []string) (map[string][]string, []string, error) {
 	schemas := map[string]map[string]bool{
-		"create":  {"source": false, "base": false, "output": false, "upstream": false, "name": false, "include": false, "radius-version": false, "dry-run": true, "approve": false},
+		"create":  {"source": false, "base": false, "output": false, "upstream": false, "name": false, "include": false, "recipe": false, "recipe-pack": false, "radius-version": false, "dry-run": true, "approve": false, "json": true},
 		"inspect": {},
-		"install": {"directory": false, "pack": false, "pack-path": false, "latest": true, "adapt": true},
+		"report":  {"directory": false},
+		"install": {"directory": false, "pack": false, "pack-path": false, "latest": true, "adapt": true, "no-open": true},
+		"open":    {"directory": false},
+		"handoff": {"directory": false, "json": true, "request-id": false, "approve": false},
 		"verify":  {"directory": false},
 	}
 	schema, ok := schemas[command]
@@ -75,7 +87,7 @@ func parseOptions(command string, args []string) (map[string][]string, []string,
 			}
 			value = args[i]
 		}
-		if key != "include" && len(values[key]) > 0 {
+		if key != "include" && key != "recipe" && key != "recipe-pack" && len(values[key]) > 0 {
 			return nil, nil, fmt.Errorf("duplicate option --%s", key)
 		}
 		values[key] = append(values[key], value)
@@ -117,6 +129,66 @@ func runWithUI(ctx context.Context, args []string, out io.Writer, probe radiusVe
 		}
 		return createCommand(ctx, values, out, ui)
 	}
+	if command == "report" {
+		if len(positions) > 1 || (len(positions) == 1 && get("directory") != "") ||
+			(len(positions) == 0 && get("directory") == "") {
+			return fmt.Errorf("report requires a pack directory OR --directory <installed-checkout>")
+		}
+		packDirectory := ""
+		if len(positions) == 1 {
+			packDirectory = positions[0]
+		}
+		result, err := ReportPack(ctx, packDirectory, get("directory"))
+		if err != nil {
+			return err
+		}
+		data, err := jsonBytes(result)
+		if err != nil {
+			return err
+		}
+		_, err = out.Write(data)
+		return err
+	}
+	if command == "handoff" {
+		if len(positions) != 1 || get("directory") == "" || get("json") == "" {
+			return fmt.Errorf("handoff requires status or apply, --directory, and --json")
+		}
+		var status HandoffStatus
+		var err error
+		switch positions[0] {
+		case "status":
+			if get("request-id") != "" || get("approve") != "" {
+				return fmt.Errorf("status does not accept mutation options")
+			}
+			status, err = HandoffStatusFor(ctx, get("directory"))
+		case "apply":
+			if get("request-id") == "" || get("approve") == "" {
+				return fmt.Errorf("apply requires --request-id and --approve after user consent")
+			}
+			status, err = ApplyHandoff(ctx, get("directory"), get("request-id"), get("approve"))
+		default:
+			return fmt.Errorf("unknown handoff operation")
+		}
+		if err != nil {
+			return err
+		}
+		data, err := jsonBytes(status)
+		if err != nil {
+			return err
+		}
+		_, err = out.Write(data)
+		return err
+	}
+	if command == "open" {
+		if len(positions) != 0 || get("directory") == "" {
+			return fmt.Errorf("open requires --directory <prepared-source-directory>")
+		}
+		if err := resumeDesktop(ctx, get("directory")); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "Copilot App accepted the source directory. Start a session in an app-created worktree, then use the Radius handoff review. No graph readiness is implied.")
+		return nil
+	}
 	if (command == "verify" && len(positions) > 1) || (command != "verify" && len(positions) != 1) {
 		return fmt.Errorf("%s requires one target (optional for verify)", command)
 	}
@@ -142,9 +214,19 @@ func runWithUI(ctx context.Context, args []string, out io.Writer, probe radiusVe
 		return err
 	case "install":
 		result, err := InstallApplication(ctx, target, ApplicationOptions{Directory: get("directory"), Pack: get("pack"), PackPath: get("pack-path"),
-			Latest: get("latest") != "", Adapt: get("adapt") != "", VersionProbe: probe}, func(s string) { fmt.Fprintln(out, s) })
+			Latest: get("latest") != "", Adapt: get("adapt") != "", VersionProbe: probe, Desktop: get("no-open") == ""}, func(s string) { fmt.Fprintln(out, s) })
 		if err != nil {
 			return err
+		}
+		if result.Status == "handoff-pending" {
+			fmt.Fprintf(out, "Source prepared at %s. The Radius overlay is staged privately and has not been applied to this clone.\n", result.Directory)
+			fmt.Fprintln(out, "Start the app session from the recorded source revision. A compatible Radius extension will offer to apply the pack to its clean worktree and show the graph after approval.")
+			fmt.Fprintln(out, "If Radius is missing, install radius from awesome-copilot through the app's Customize page. Keep an existing local development build; do not install a duplicate. Sign-in, trust, and plugin consent remain in the app.")
+			if err := launchCopilot(ctx, result.Directory); err != nil {
+				return err
+			}
+			fmt.Fprintln(out, "Copilot App accepted the directory. Session start and Radius approval are still required; the graph is not yet ready.")
+			return nil
 		}
 		if result.Status == "adaptation-required" {
 			fmt.Fprintf(out, "Prepared latest source in %s.\nStatus: adaptation-required (not model-validated or deployment-verified).\nOpen this checkout in Copilot with the Radius tools and follow .radpack/ADAPT.md.\nConflicts and reference assets are preserved; no agent or Radius tool was executed.\n", result.Directory)

@@ -87,6 +87,21 @@ func printCreateReview(out io.Writer, p *Plan, output, sourceNote string) {
 	for _, warning := range append(append([]string{}, p.RadiusEvidence.Warnings...), p.BuildWarnings...) {
 		fmt.Fprintf(out, "Warning: %s\n", warning)
 	}
+	fmt.Fprintf(out, "Build source checks: %s\n", p.Readiness.Status)
+	if p.Manifest.Integration != nil {
+		fmt.Fprintln(out, "Reusable Radius integration (registration in a consumer environment is not verified):")
+		for _, file := range p.Manifest.Integration.Recipes {
+			fmt.Fprintf(out, "  recipe      %s\n", file)
+		}
+		for _, file := range p.Manifest.Integration.RecipePacks {
+			fmt.Fprintf(out, "  recipe-pack %s\n", file)
+		}
+	}
+	for _, issue := range p.Readiness.Issues {
+		if issue.Phase == "recipes" {
+			fmt.Fprintf(out, "Warning: %s %s\n", issue.Message, issue.NextAction)
+		}
+	}
 	fmt.Fprintln(out, "\nWhat consumers receive:")
 	labels := map[string]string{"retain": "retain upstream", "add": "add", "replace": "replace", "delete": "delete"}
 	for _, file := range p.Manifest.Files {
@@ -132,6 +147,9 @@ func createCommand(ctx context.Context, values map[string][]string, out io.Write
 		}
 		return ""
 	}
+	if get("json") != "" {
+		return createJSONCommand(ctx, values, out)
+	}
 	if get("approve") != "" && get("dry-run") != "" {
 		return fmt.Errorf("use --dry-run or --approve, not both")
 	}
@@ -146,7 +164,7 @@ func createCommand(ctx context.Context, values map[string][]string, out io.Write
 	}
 	source, err := prepareCreateSource(ctx, CreateOptions{
 		Source: get("source"), Base: get("base"), Upstream: get("upstream"),
-		Name: get("name"), RadiusVersion: version, Include: values["include"],
+		Name: get("name"), RadiusVersion: version, Include: values["include"], Recipes: values["recipe"], RecipePacks: values["recipe-pack"],
 	}, ui)
 	if err != nil {
 		if errors.Is(err, errCreateCancelled) {

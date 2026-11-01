@@ -52,7 +52,7 @@ func InstallPack(ctx context.Context, packDirectory, destination string, o Insta
 		if err != nil {
 			return err
 		}
-		if err := validateUpstreamTree(selectedTree); err != nil {
+		if err := validateUpstreamTreeForIntegration(selectedTree, m.Integration); err != nil {
 			return err
 		}
 		if _, ok := selectedTree[".radpack/radpack.json"]; ok {
@@ -81,7 +81,7 @@ func InstallPack(ctx context.Context, packDirectory, destination string, o Insta
 				if len(b) > maxFileBytes || referenceBytes > maxPackBytes {
 					return fmt.Errorf("reference assets exceed size limits")
 				}
-				if err := assertPortableFile(b, file.Path); err != nil {
+				if err := assertIntegrationAsset(b, file.Path, m.Integration); err != nil {
 					return err
 				}
 				references[file.Path] = b
@@ -148,7 +148,7 @@ func InstallPack(ctx context.Context, packDirectory, destination string, o Insta
 				return err
 			}
 			if current != nil {
-				if err := assertPortableFile(current.Bytes, file.Path); err != nil {
+				if err := assertIntegrationAsset(current.Bytes, file.Path, m.Integration); err != nil {
 					return err
 				}
 			}

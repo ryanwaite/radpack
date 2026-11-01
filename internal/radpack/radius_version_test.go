@@ -11,6 +11,21 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if mode := os.Getenv("RADPACK_DESKTOP_TEST_HELPER"); mode != "" {
+		if (len(os.Args) != 3 && len(os.Args) != 4) || os.Args[1] != "open" ||
+			(len(os.Args) == 4 && os.Args[2] != "--new") || !filepath.IsAbs(os.Args[len(os.Args)-1]) {
+			os.Exit(3)
+		}
+		if mode == "fail" {
+			os.Exit(1)
+		}
+		if output := os.Getenv("RADPACK_DESKTOP_TEST_OUTPUT"); output != "" {
+			if err := os.WriteFile(output, []byte(os.Args[len(os.Args)-1]), 0600); err != nil {
+				os.Exit(2)
+			}
+		}
+		os.Exit(0)
+	}
 	if mode := os.Getenv("RADPACK_VERSION_TEST_HELPER"); mode != "" {
 		if strings.Join(os.Args[1:], " ") != "version --cli --output json" {
 			os.Exit(2)
@@ -269,7 +284,7 @@ func TestVersionWarningsNeverFailCLIInstallation(t *testing.T) {
 			}
 			f.publish(t)
 			var out strings.Builder
-			err := run(ctx, []string{"install", f.pack, "--directory", f.destination}, &out,
+			err := run(ctx, []string{"install", f.pack, "--directory", f.destination, "--no-open"}, &out,
 				func(context.Context) (string, error) {
 					if mode == "unavailable" {
 						return "", errors.New("private output")

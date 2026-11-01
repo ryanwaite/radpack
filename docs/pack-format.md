@@ -1,6 +1,6 @@
 # Pack manifests and installation records
 
-## Portable pack format v1
+## Portable pack formats v1 and v2
 
 A pack is a directory containing exactly `radpack.json` and the declared payload
 files beneath `overlay/`. No archive extraction or install scripts are involved.
@@ -78,6 +78,45 @@ Unchanged selected files are recorded as `retain`. This lets the same format
 support assets that already live in the upstream application repository, and
 binds local dependencies to the pinned revision without copying them.
 
+### Recipe roles in v2
+
+Version 2 adds an `integration` object to the portable manifest. Its fields are
+required arrays, and at least one entry point must be declared. This fragment
+shows the additional fields; all other manifest fields and file operations
+remain required:
+
+```json
+{
+  "formatVersion": 2,
+  "integration": {
+    "recipes": [".radius/recipes/rabbitmq.bicep"],
+    "recipePacks": [".radius/recipe-packs/azure.bicep"]
+  }
+}
+```
+
+Every entry must identify an exact installed file in `files`, with a non-null
+`after` fingerprint. Duplicate paths, case aliases, and assigning both roles to
+one file are rejected. Recipe entry points support `.bicep`, `.tf`, and `.tf.json`.
+Recipe-pack entry points support Bicep declarations of `Radius.Core/recipePacks`.
+The declaration check is not a compiler or proof of runtime behavior.
+
+Create accepts repeated `--recipe` and `--recipe-pack` file options. It also
+recognizes the standard sibling `custom-recipe-pack.bicep` as a pack entry point.
+When any roles are present, it emits v2. Without roles it continues to emit v1.
+V1 forbids non-null integration metadata; older readers reject v2 instead of
+silently omitting its semantics.
+
+An explicitly declared reusable recipe pack may use the filename
+`radius-recipe-pack.bicep`, which is otherwise reserved for generated deployment
+material. This exception applies only to the exact declared path. Forbidden
+parent directories, credentials, environment-resource declarations, and other
+content checks still apply. It is not a general exclusion bypass.
+
+Roles survive installation and desktop handoffs as part of the manifest and
+receipt. They do not cause registration or attachment to a Radius environment.
+Consumers still perform those actions through Radius with their own inputs.
+
 File operations are sorted by their case-sensitive paths on export. Paths use
 forward slashes, contain printable ASCII only, and are relative to the application checkout. Parent traversal,
 absolute paths, `.git` segments, Windows device names, alternative data streams,
@@ -86,8 +125,8 @@ Git short-name aliases, and overlapping file/parent paths are prohibited.
 ## Review and integrity
 
 The preview's approval SHA covers the manifest, excluded-file inventory,
-unselected-file inventory, policy blockers, Radius version evidence, and
-build-source warnings. Publication rechecks that SHA and
+unselected-file inventory, policy blockers, Radius version evidence,
+build-source warnings, and the structured readiness assessment. Publication rechecks that SHA and
 the selected payload fingerprints. A fresh create invocation recomputes the review
 from the current working tree; a prior approval cannot silently approve new bytes.
 
@@ -147,6 +186,13 @@ files and records the descriptor's original hash and location in the receipt.
 The portable materialization is stored locally for inspection and verification;
 there is no duplicated overlay committed upstream.
 
+An in-repository descriptor may also use `formatVersion: 2` and the same
+`integration` object to declare recipe and recipe-pack entry points. Its other
+fields are unchanged. Role paths are repository-root-relative and are added to
+the selected asset inventory. A v2 descriptor requires integration metadata;
+a v1 descriptor must not supply it. Discovery applies the same portability and
+content checks as create.
+
 An external portable pack still pins its own upstream reference commit. These
 two forms are distinguished by the descriptor's `kind: "in-repository"` field.
 `--pack` selects a portable pack directory; `--pack-path` selects an in-repository
@@ -174,6 +220,12 @@ Malformed or unsafe sources do not trigger fallback. Source repository identity
 must match the application's identity (case-insensitive).
 
 ## Installation receipt v2
+
+The receipt describes the assembled checkout. With direct `--no-open` installation
+it lives in Radpack's new clone. With the desktop flow it is written to the
+app-created worktree only after consented application. The initial source clone
+stays clean; pending request and claim data live outside the repository and are
+not portable pack fields. See [the handoff protocol](copilot-handoff.md).
 
 New installations write `.radpack/install.json` with:
 
@@ -243,9 +295,9 @@ Reusable recipe definitions and required inputs may be included. Concrete
 environment resources, generated provider-pack copies, credentials, state, and
 deployment-specific parameter values must not be included. The parser and policy
 in `internal/radpack/pack.go`, `internal/radpack/types.go`, and
-`internal/radpack/policy.go` are authoritative for format v1. The native Go
-implementation reads the same pack and receipt formats as the original JavaScript
-CLI. JSON parsers reject duplicate keys, unknown fields, missing required fields,
+`internal/radpack/policy.go` are authoritative for formats v1/v2. The native Go
+implementation preserves original v1 packs and receipt formats, while v2 adds
+explicit recipe roles. JSON parsers reject duplicate keys, unknown fields, missing required fields,
 and invalid field types; raw JSON values are not echoed in errors.
 
 Review approval hashes are temporary approvals for the current CLI's preview,
@@ -261,3 +313,40 @@ This version deliberately has no lifecycle hooks, remote mutable catalog, automa
 semantic merging/agent invocation, or provider certification field. Future format
 changes must preserve the environment boundary and fail closed on unsupported
 versions rather than guessing their meaning.
+
+## Agent reports
+
+`create --json` produces a versioned report with `reportVersion: 1`,
+`command: "create"`, `status`, `stage`, `output`, `reviewSha256`, `review`, and
+`diagnostics` (fields unavailable before planning are omitted). The review is
+the same object bound by the approval hash in interactive creation.
+
+Statuses are `awaiting-review`, `saved`, and `blocked`. If saving succeeds but
+scratch cleanup fails, status is `saved-with-cleanup-error`; the output must not
+be overwritten by a blind retry. Source ambiguity, model absence, and policy
+failures return nonzero with a machine-readable diagnostic and next action.
+Invalid command syntax is rejected before a report can be produced.
+
+`report <pack-directory>` and `report --directory <installed-checkout>` emit
+`reportVersion: 1`, `command: "report"`, pack hash, application revision, portable
+format version, file-verification state, installation status, and `readiness`.
+The installed form first verifies the recorded snapshot and assesses its actual
+selected-source delta, including preserved latest-mode conflicts.
+
+Readiness has a deliberately limited `analysisScope`:
+`literal-references-in-selected-bicep-files`. Build statuses are
+`not-assessed`, `review-required`, `requires-source-assembly`, or
+`reference-checks-passed`. No status claims a build or deployment succeeded.
+Each issue has a stable code, phase, optional file, message, and next action.
+
+Recipe-source checks distinguish immutable Git SHAs and OCI digests from tags,
+dynamic values, and unrecognized references. Registry accessibility, recipe
+execution, and complete Terraform dependency resolution are not checked.
+Credentials remain `not-inspected`, recipe registration `not-checked`,
+compilation and deployment verification `not-performed`. Source access failures
+are not relabeled as missing credentials.
+
+Pack-only reporting does not fetch retained source files. Their absent contents
+produce `retained-content-not-inspected` findings instead of an inferred pass.
+Reporting, saving, and publication remain separate: none of these commands
+publishes a pack, a recipe, or prepared application source.

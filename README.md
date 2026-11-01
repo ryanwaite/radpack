@@ -11,9 +11,10 @@ For an application with a published Radpack:
 radpack install owner/application
 ```
 
-Open the installed checkout in the GitHub Copilot App with Radius Canvas.
-Explore the application graph, create your own Radius environment, and deploy
-through the Radius tools.
+Radpack opens a session draft for the clean source clone. Start a session at the
+recorded revision; the updated Radius extension offers to apply the integration
+to the app-created worktree. Approve that review to see the existing graph.
+Then create your own Radius environment and deploy through the Radius tools.
 
 Radpack finds the integration and installs the application revision it was
 prepared for. You supply your own environment and credentials.
@@ -36,6 +37,10 @@ Create this pack? [y/N]
 No initialization step or advance recordkeeping is required. Radpack saves the
 pack under `contrib/<application-name>` by default. Creating a pack does not
 certify that it has been deployment-tested.
+
+The application can belong to someone else. Its upstream repository remains
+the application's identity; the pack can be reviewed and published separately.
+Saving a pack never pushes source code or creates a pull request.
 
 **Early development:** the bundled catalog is currently empty. You can install
 a local pack or point to a separately hosted pack. `owner/application` is a
@@ -75,6 +80,10 @@ Prebuilt release binaries are not yet published.
 
 Radius and its Canvas tools are separate prerequisites for modeling,
 visualization, and deployment. Radpack does not install them.
+The desktop handoff requires a Radius extension version that understands the
+Radpack handoff protocol; either the marketplace plugin or a local development
+build can supply it. If it is absent, use the app's Customize page to install it
+with the normal approval flow. Radpack does not replace development extensions.
 
 ## Try your first local pack
 
@@ -91,7 +100,7 @@ changes, and answer yes to save. Both commands below use the pack you just
 created, so they do not need a catalog entry:
 
 ```bash
-radpack install ../my-app-pack --directory ../my-app-test
+radpack install ../my-app-pack --directory ../my-app-test --no-open
 radpack verify --directory ../my-app-test
 ```
 
@@ -236,6 +245,44 @@ cloud compatibility.
 | Explicitly selected application adaptations, skills, and instructions | Unselected application changes and GitHub workflow changes |
 | Secret declarations with consumer-supplied inputs | The author's secret values |
 
+### Include reusable recipes and recipe packs
+
+Declare the integration entry points explicitly:
+
+```bash
+radpack create \
+  --recipe .radius/recipes/rabbitmq.bicep \
+  --recipe-pack .radius/recipe-packs/azure.bicep \
+  --recipe-pack .radius/recipe-packs/aws.bicep
+```
+
+Each flag accepts an individual file and can be repeated. Recipes may be Bicep,
+Terraform `.tf`, or `.tf.json` files. Recipe-pack entry points must be Bicep
+files declaring `Radius.Core/recipePacks` resources. Literal local Bicep module
+dependencies are included in the review. Include other required scripts and
+Terraform module files with `--include`; Radpack does not resolve a complete
+Terraform module automatically.
+
+The conventional `custom-recipe-pack.bicep` beside the application model is
+recognized automatically. An authored file named `radius-recipe-pack.bicep`
+can also be included with `--recipe-pack`: its name alone does not make it an
+environment instance. Without an explicit recipe-pack role that generated
+filename remains excluded. Declaring a role does not bypass content checks:
+concrete environment resources, credential values, and forbidden directories
+remain blocked.
+
+Packs with recipe roles use **portable format v2**. Their manifest records which
+files are recipes and recipe packs, alongside the existing file operations and
+checksums. Packs without role declarations continue to use v1, and this CLI
+reads both formats. Older CLI versions reject v2 rather than silently ignoring
+the integration metadata.
+
+These files are reusable definitions, not the author's deployment. Installation
+preserves them but does not register them or attach them to an environment.
+Use the Radius tools to register recipes, attach the appropriate packs, and
+supply consumer-owned inputs when setting up deployment. A declared Azure or AWS
+recipe pack does not itself establish that the provider has been tested.
+
 Create discovers literal local Bicep imports, modules, loaded files, and compiler
 extension paths. Unknown `.radius/` files are not included automatically.
 Required files must remain within the repository.
@@ -243,6 +290,31 @@ Required files must remain within the repository.
 Radpack checks the chosen source revision as well as the selected assets for
 known Radius environment artifacts. Excluding a file from the overlay is not
 enough if cloning the source would restore it.
+
+### Machine-readable review for agents
+
+Agents can preview and save without terminal questions:
+
+```bash
+radpack create --recipe-pack .radius/recipe-packs/azure.bicep --json
+radpack create --recipe-pack .radius/recipe-packs/azure.bicep \
+  --json --approve <review-sha>
+```
+
+`--json` disables prompts. Standard output contains one JSON report with the
+current stage, review hash, selected assets, readiness findings, and next actions.
+Status is `awaiting-review`, `saved`, or `blocked`; a cleanup error after a
+successful save is reported as `saved-with-cleanup-error`. A blocked operation
+returns nonzero without exposing matched secret values. Source ambiguity,
+missing models, and policy failures have distinct diagnostic codes.
+
+Agents must not infer that a Git access failure means credentials are missing.
+The report identifies unconfirmed source access and asks for the needed
+repository/revision decision without reading credential stores.
+
+Save and publication are separate. This phase produces a local pack directory.
+It does not introduce an archive format, publish recipes, upload application
+source, or submit a catalog contribution automatically.
 
 ## Install options and discovery
 
@@ -252,10 +324,39 @@ Name the application you want:
 radpack install owner/application
 ```
 
-Radpack finds its integration, clones the recorded application revision, and
-applies the declared changes. The destination defaults to
+Radpack finds its integration, stages and verifies the assembled application,
+clones the recorded source revision, and opens a Copilot App session draft.
+The source clone stays clean. After you start an app-created worktree session
+and approve the Radius handoff, the integration is applied there.
+The destination defaults to
 `./<application-repository-name>`; change it with `--directory`.
 An existing destination is never reused, even if empty.
+
+For a direct installation without the desktop handoff:
+
+```bash
+radpack install owner/application --no-open
+```
+
+This applies the pack immediately to the new checkout and does not launch the
+app or write handoff state. It is the appropriate mode for automation and for
+using a Radius extension that does not yet support the handoff.
+
+Default desktop installation saves private staging under `~/.radpack/handoffs/`.
+The app session must use a clean linked worktree of the prepared clone at the
+recorded commit. Existing setup-script output, user edits, or an unexpected
+revision block application rather than being overwritten. The user still starts
+the session and accepts repository trust and pack-application prompts.
+
+If the app is missing or does not open, the clone and pending handoff remain:
+
+```bash
+radpack open --directory /path/to/prepared-source
+```
+
+This retries opening a session draft without recloning. Pending requests expire
+after seven days; local state is retained for inspection. See the
+[handoff protocol](docs/copilot-handoff.md) for its ownership and recovery rules.
 
 Discovery follows this order:
 
@@ -281,7 +382,7 @@ radpack install owner/application \
 radpack install owner/application --pack-path integrations/radius
 
 # Install a local pack directly
-radpack install ./contrib/my-app --directory ../my-app-test
+radpack install ./contrib/my-app --directory ../my-app-test --no-open
 ```
 
 `--pack` and `--pack-path` are mutually exclusive. External packs must identify
@@ -338,7 +439,8 @@ changes only where their original-file preconditions still hold. Conflicting
 upstream files stay untouched; upstream deletions remain absent. Structural
 conflicts involving symlinks, submodules, or file/directory changes cause an error.
 
-The result is an **adaptation-required** checkout, not an automatically repaired
+Once applied to the app worktree (or installed directly with `--no-open`), the
+result is an **adaptation-required** checkout, not an automatically repaired
 application. Radpack preserves the reference assets and writes instructions for
 a human-guided Radius session:
 
@@ -362,7 +464,7 @@ than modifying the published original.
 
 ### Version warnings do not block installation
 
-After installation, Radpack compares the pack's recorded release with the local
+After preparation or direct installation, Radpack compares the pack's recorded release with the local
 Radius CLI using `rad version --cli --output json`. It uses `RADIUS_RAD_BINARY`
 when configured, otherwise `rad` on PATH. The read-only query has a five-second
 timeout and does not contact the control plane.
@@ -390,7 +492,9 @@ contents and modes, and absence of undeclared changes or extra files, including
 ignored files. Matching installations also check discovered local dependencies.
 Latest-mode handoffs may have dependencies still to resolve during adaptation.
 
-Installation performs this check automatically. You can supply an external pack
+Pack application performs this check automatically. For desktop handoffs, run
+verification against the app worktree after approval, not the clean source clone.
+You can supply an external pack
 to compare against it:
 
 ```bash
@@ -405,9 +509,47 @@ that comparison fail.
 The commands do not establish that the model compiles or that the application
 works on Azure or AWS. Verify deployment separately for each provider.
 
+## Check build and recipe readiness
+
+```bash
+# Inspect the saved pack without fetching its retained upstream files
+radpack report ./contrib/my-app
+
+# Inspect all declared assets in a verified installed checkout
+radpack report --directory ../my-app-test
+```
+
+Both commands return JSON. The report lists build-source findings, recipe
+entry points, recipe-pack entry points, and machine-readable issues with a
+`nextAction`. It distinguishes:
+
+| Build status | Meaning |
+| --- | --- |
+| `reference-checks-passed` | The observed literal Git application references match the selected source and show no detected overlay gap. This is not a build or deployment test. |
+| `requires-source-assembly` | The pack changes files within a Git build context. Fetching upstream alone will omit those changes. |
+| `review-required` | A revision differs, a source is dynamic/external, or required contents are unavailable for inspection. |
+| `not-assessed` | No literal Git build references were found; parameterized builds, local contexts, or prebuilt images need review. |
+
+Recipe source references are assessed separately. Exact Git commits and OCI
+digests identify immutable inputs; tags, dynamic sources, and unresolved
+references require review. The report never checks registry access or downloads
+those dependencies. Terraform module dependencies require explicit inspection.
+
+Compilation and deployment verification remain `not-performed`, environment
+recipe registration remains `not-checked`, and credentials remain
+`not-inspected`. Missing retained files in a pack-only report are marked unknown;
+use the installed-checkout form to inspect them. For desktop installs, point it
+at the app worktree after applying the pack, not the clean source clone.
+
+The current Radius Git image-build path does not assemble a Radpack overlay.
+This phase reports that requirement explicitly; implementing upstream-plus-pack
+builds is a separate step. A pack can be saved for further work without falsely
+being labeled ready to deploy.
+
 ## From installation to deployment
 
-Open the installed checkout in Radius Canvas and inspect its graph. Create your
+Use the app worktree after approving the desktop handoff, or open the directly
+installed checkout when using `--no-open`. Inspect its Radius graph. Create your
 own Radius environment and supply your own credentials and application secrets
 through the Radius tools.
 
@@ -453,23 +595,29 @@ build behavior still need review.
 - **Origin evidence is preserved.** Radpack does not invent a fresh validation
   record. Canvas may request review when the model's recorded source differs
   from the installed baseline.
-- **Failed installs do not overwrite existing checkouts.** Ordinary failures
-  remove only the destination created by that invocation. An interrupted process
-  can leave a partial directory; inspect it before removing it.
+- **Failures preserve existing work.** A failed direct install cleans up only
+  its newly created directory. A failed app launch preserves the clean source
+  and pending handoff. A failed worktree application leaves its claim and files
+  for inspection; it never removes the app worktree or blindly retries partial
+  writes. An interrupted process can leave partial output.
 
 ## Command reference
 
 | Command | Purpose | Options |
 | --- | --- | --- |
-| `create` | Review and save a prepared application's pack | `--source`, `--output`, `--upstream`, `--base`, `--name`, repeated `--include`, `--radius-version`, `--dry-run`, `--approve` |
+| `create` | Review and save a prepared application's pack | `--source`, `--output`, `--upstream`, `--base`, `--name`, repeated `--include`, `--recipe`, `--recipe-pack`, `--radius-version`, `--dry-run`, `--approve` |
+| `create --json` | Agent-readable preview or approved save | Same options; never prompts |
 | `inspect <pack-directory>` | Validate and display a portable pack | Local pack directory |
-| `install <target>` | Discover and install an integration | `--directory`, `--pack` or `--pack-path`, paired `--latest --adapt` |
+| `report [pack-directory]` | Report build-source and recipe readiness as JSON | Supply a pack directory or `--directory <installed-checkout>` |
+| `install <target>` | Prepare an app handoff, or install directly | `--directory`, `--pack` or `--pack-path`, paired `--latest --adapt`, `--no-open` |
+| `open` | Retry opening a prepared clone in the Copilot App | Required `--directory`; optional operator environment `RADPACK_GITHUB_COMMAND` |
 | `verify [pack-directory]` | Compare an installation with its recorded snapshot | Required `--directory` |
 | `--help` | Show CLI usage | No repository access |
 
 Errors return a nonzero exit code. Cancelling an interactive export writes no
-pack. A completed latest-source handoff returns zero with
-`adaptation-required`; that status does not mean the model is ready to deploy.
+pack. A desktop launch acknowledgment does not mean a session or graph is ready.
+A completed direct latest-source install reports `adaptation-required`; that
+status does not mean the model is ready to deploy.
 
 ## Troubleshooting
 
@@ -483,6 +631,10 @@ pack. A completed latest-source handoff returns zero with
 | Credential or environment policy blocks export | Remove concrete values or choose a clean source revision. Do not move credentials elsewhere to bypass a check. |
 | Radius versions differ | Installation can continue; validate with the Radius tooling you intend to use. |
 | Latest mode reports conflicts | Follow `.radpack/ADAPT.md` and compare preserved upstream files with the reference assets. |
+| App opening failed | Run `radpack open --directory <prepared-source>`. Do not repeat install into the existing directory. |
+| No Radius handoff appears | Ensure the effective Radius extension supports the protocol, start a session, and use a linked worktree of the prepared clone. Do not install a duplicate over a development build. |
+| Handoff reports a dirty worktree or wrong revision | Preserve user/setup changes and create a clean session worktree at the recorded source commit. |
+| Handoff is claimed or partly applied | Inspect the original claiming worktree. Do not reset it or retry automatically. A new install directory creates a separate request. |
 | Canvas reports a stale model | Review it through Radius's validation/refresh workflow. |
 | Deployment builds old code | Check application-owned Git build URLs and whether the published build source contains required adaptations. |
 
@@ -508,9 +660,14 @@ verification is skipped on Windows.
 | `internal/radpack/create_source.go` | Published-source inference and verification |
 | `internal/radpack/create_review.go` | Terminal review, file selection, confirmation |
 | `internal/radpack/build_sources.go` | Source-state checks and build warnings |
+| `internal/radpack/integration_assets.go` | Explicit recipe roles and portability rules |
+| `internal/radpack/readiness.go` | Build-source and recipe-reference assessment |
+| `internal/radpack/report.go` | Machine-readable create and readiness reports |
 | `internal/radpack/discovery.go` | Application, override, and catalog discovery |
 | `internal/radpack/pack.go` | Pack validation and export |
 | `internal/radpack/install.go` | Installation, receipts, verification, adaptation handoffs |
+| `internal/radpack/handoff.go` | Private desktop staging, exact-worktree claims, consent-bound application |
+| `internal/radpack/copilot_open.go` | Supported Copilot App launch command |
 | `internal/radpack/policy.go` | Paths, content checks, archive inspection, local dependencies |
 | `internal/radpack/radius_version.go` | Version evidence and local CLI warnings |
 | `internal/radpack/types.go` | Typed records and strict JSON parsing |
@@ -527,8 +684,12 @@ the [contribution guide](CONTRIBUTING.md) for preparing and verifying a pack.
 
 The next product milestone is a real application pack installed into a fresh
 checkout, inspected in Canvas, and deployed in a separate consumer environment.
-Automatic adaptation, pack signing, general binary assets, and a Canvas install
-button are not implemented.
+Automatic adaptation, pack signing, general binary assets, automatic session
+start, and automatic plugin installation are not implemented.
+
+The [Radius-owned handoff protocol](docs/copilot-handoff.md) describes coordination
+between this CLI and the companion Radius extension. End-to-end graph opening
+requires that updated extension to be loaded; the Copilot App itself is unchanged.
 
 ## License
 

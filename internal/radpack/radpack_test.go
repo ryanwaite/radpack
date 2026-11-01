@@ -543,7 +543,7 @@ func TestCustomTypeArchives(t *testing.T) {
 }
 
 func descriptor() assetManifest {
-	return assetManifest{1, "in-repository", "fixture", ".radius/app.bicep", nil, []string{".radius/app.bicep", ".radius/bicepconfig.json"}}
+	return assetManifest{1, "in-repository", "fixture", ".radius/app.bicep", nil, []string{".radius/app.bicep", ".radius/bicepconfig.json"}, nil}
 }
 func TestInRepositoryDiscovery(t *testing.T) {
 	for _, location := range []string{".radpack", "integrations/radius"} {
@@ -817,7 +817,7 @@ func TestCLI(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "manifestSha256") {
 		t.Fatal(out, errs)
 	}
-	code, out, errs = invoke("install", "radpack-fixture/app", "--pack", f.pack, "--directory", f.destination, "--latest", "--adapt")
+	code, out, errs = invoke("install", "radpack-fixture/app", "--pack", f.pack, "--directory", f.destination, "--latest", "--adapt", "--no-open")
 	if code != 0 || !strings.Contains(out, "adaptation-required") {
 		t.Fatal(out, errs)
 	}
@@ -848,7 +848,7 @@ func TestNativeExecutable(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %s: %v", output, err)
 	}
-	command := exec.Command(executable, "install", "radpack-fixture/app", "--pack", f.pack)
+	command := exec.Command(executable, "install", "radpack-fixture/app", "--pack", f.pack, "--no-open")
 	command.Dir = f.root
 	// Use a harmless executable that rejects the version query, never the
 	// developer's real Radius installation.

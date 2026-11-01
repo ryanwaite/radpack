@@ -18,11 +18,29 @@ untested model as though it were a deployment-verified pack.
 4. Run `radpack create` in a terminal. Review the inferred published revision,
    select any required application adaptations, and confirm the export.
    For automation, use `--dry-run`, explicit selections, and `--approve`.
-5. Install into a new directory and run `radpack verify` before building.
+5. Install into a new directory with `--no-open` and run `radpack verify` before
+   building, or approve the desktop handoff and verify the resulting app worktree.
 6. Use a separate consumer environment and a repository you control to test the
    installed application's graph, build, deployment, and primary user journey.
    Do not rely on the author's state, local files, private recipe access, or
    credentials.
+
+Use `--recipe <file>` and `--recipe-pack <file>` to declare reusable integration
+entry points. These roles produce format v2 and remain available in the installed
+manifest. Include all required Terraform module files and scripts explicitly;
+local dependency discovery is Bicep-specific. Parameterized recipe-pack
+definitions may be shared, but concrete author environments and secret values
+must remain outside the pack.
+
+Use `radpack create --json` for agent-readable review and
+`radpack report <pack-directory>` for build-source and recipe findings.
+`radpack report --directory <installed-checkout>` can inspect retained source
+assets without guessing their contents. Treat `reference-checks-passed` as a
+limited static result, never as compilation or deployment evidence.
+
+Pack creation saves locally. Recipe publication, application-source publication,
+and a catalog PR are separate actions requiring the user's chosen destination
+and approval. Do not add a new pack archive format for these workflows.
 
 Place the resulting pack under `contrib/<application>/`. The directory must
 contain only the format-defined manifest and payloads; keep review commentary in
@@ -49,7 +67,8 @@ review or your organization's secret scanner.
 
 ## Current acceptance boundary
 
-Format v1 supports text payloads, inspected custom-type archives, and literal local Bicep dependencies. Do not
+Formats v1/v2 support text payloads, inspected custom-type archives, and literal
+local Bicep dependencies; v2 additionally records recipe roles. Do not
 remove a required binary/custom-type extension or dependency to make a pack pass
 validation. Report the unsupported requirement instead. Remote build sources
 must contain the source adaptations the application needs.
@@ -57,6 +76,13 @@ must contain the source adaptations the application needs.
 No real application pack is included until this fresh-environment workflow has
 been completed. Do not treat the synthetic test fixture as a runnable Radius
 application or proof of cloud compatibility.
+
+For desktop handoff changes, test with isolated local-user state and simulated
+app executables. Never open a contributor's live app or install plugins from a
+unit test. State belongs outside the repository. A handoff must match the clone's
+Git identity, selected commit, and exact worktree review before applying files.
+Partial application stays claimed and visible; do not remove an app-managed
+worktree to recover. Coordinate protocol changes with the Radius extension.
 
 Create verifies source revisions in a scratch Git database, not the author's
 checkout. Keep prompts terminal-only and confirmation default-no. Tests should

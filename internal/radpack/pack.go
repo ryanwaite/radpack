@@ -13,8 +13,11 @@ import (
 )
 
 func validateManifest(m Manifest) error {
-	if m.FormatVersion != 1 {
+	if m.FormatVersion != 1 && m.FormatVersion != 2 {
 		return fmt.Errorf("unsupported pack format version")
+	}
+	if err := validateIntegration(m); err != nil {
+		return err
 	}
 	if !namePattern.MatchString(m.Name) {
 		return fmt.Errorf("invalid pack name")
@@ -35,7 +38,7 @@ func validateManifest(m Manifest) error {
 	seen := map[string]bool{}
 	hasApp := false
 	for _, file := range m.Files {
-		reason, err := excludedReason(file.Path)
+		reason, err := integrationExcludedReason(file.Path, m.Integration)
 		if err != nil {
 			return err
 		}
@@ -182,6 +185,8 @@ type CreateOptions struct {
 	// BaselineRoot is a verified scratch Git database, used when the published
 	// baseline is not present in the author's object database.
 	BaselineRoot string
+	Recipes      []string
+	RecipePacks  []string
 }
 
 func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
@@ -265,15 +270,34 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 		}
 		add(file)
 	}
+	integration := &IntegrationAssets{Recipes: append([]string{}, o.Recipes...), RecipePacks: append([]string{}, o.RecipePacks...)}
+	defaultPack := path.Join(path.Dir(app), "custom-recipe-pack.bicep")
+	if seen[defaultPack] {
+		integration.RecipePacks = append(integration.RecipePacks, defaultPack)
+	}
+	integration.Recipes = uniqueSorted(integration.Recipes)
+	integration.RecipePacks = uniqueSorted(integration.RecipePacks)
+	versionNumber := 1
+	if len(integration.Recipes)+len(integration.RecipePacks) == 0 {
+		integration = nil
+	} else {
+		versionNumber = 2
+		for _, file := range append(append([]string{}, integration.Recipes...), integration.RecipePacks...) {
+			if err := safePath(file); err != nil {
+				return nil, err
+			}
+			add(file)
+		}
+	}
 	tree, err := treeAt(ctx, baselineRoot, o.Base)
 	if err != nil {
 		return nil, err
 	}
 	p := &Plan{Review: Review{
-		Manifest: Manifest{1, name, Upstream{repository, o.Base}, app, o.RadiusVersion, []FileOperation{}},
+		Manifest: Manifest{FormatVersion: versionNumber, Name: name, Upstream: Upstream{repository, o.Base}, Application: app, RadiusVersion: o.RadiusVersion, Files: []FileOperation{}, Integration: integration},
 		Excluded: []Excluded{}, Unselected: []string{}, Blockers: []string{}, BuildWarnings: []string{},
 	}, Payloads: map[string][]byte{}}
-	if err := validateUpstreamTree(tree); err != nil {
+	if err := validateUpstreamTreeForIntegration(tree, integration); err != nil {
 		p.Blockers = append(p.Blockers, err.Error())
 	}
 	buildAssets := map[string][]byte{}
@@ -284,7 +308,7 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 		}
 		file := selected[i]
 		err := func() error {
-			reason, err := excludedReason(file)
+			reason, err := integrationExcludedReason(file, integration)
 			if err != nil {
 				return err
 			}
@@ -303,7 +327,7 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 				return fmt.Errorf("selected file does not exist: %s", file)
 			}
 			if current != nil {
-				if err := assertPortableFile(current.Bytes, file); err != nil {
+				if err := assertIntegrationAsset(current.Bytes, file, integration); err != nil {
 					return err
 				}
 				deps, err := dependencies(current.Bytes, file)
@@ -357,6 +381,7 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 	}
 	sort.Slice(p.Manifest.Files, func(i, j int) bool { return p.Manifest.Files[i].Path < p.Manifest.Files[j].Path })
 	p.BuildWarnings = buildSourceWarnings(p.Manifest, buildAssets)
+	p.Readiness = assessBuildReadiness(p.Manifest, buildAssets)
 	version, evidence, err := detectRadiusVersion(source, app, o.RadiusVersion)
 	if err != nil {
 		p.Blockers = append(p.Blockers, err.Error())
@@ -506,7 +531,7 @@ func WritePack(p *Plan, destination, approval string) (string, error) {
 		if !ok || hash(payload) != file.After.SHA256 {
 			return "", fmt.Errorf("payload changed after review")
 		}
-		if err := assertPortableFile(payload, file.Path); err != nil {
+		if err := assertIntegrationAsset(payload, file.Path, p.Manifest.Integration); err != nil {
 			return "", err
 		}
 	}
@@ -562,7 +587,7 @@ func LoadPack(directory string) (*Pack, error) {
 		if payload == nil || hash(payload.Bytes) != entry.After.SHA256 {
 			return nil, fmt.Errorf("missing or modified payload: %s", entry.Path)
 		}
-		if err := assertPortableFile(payload.Bytes, entry.Path); err != nil {
+		if err := assertIntegrationAsset(payload.Bytes, entry.Path, m.Integration); err != nil {
 			return nil, err
 		}
 		total += len(payload.Bytes)
@@ -635,7 +660,7 @@ func verifyDependencies(destination string, m Manifest) error {
 		if total > maxPackBytes {
 			return fmt.Errorf("declared files exceed 32 MiB limit")
 		}
-		if err := assertPortableFile(current.Bytes, file.Path); err != nil {
+		if err := assertIntegrationAsset(current.Bytes, file.Path, m.Integration); err != nil {
 			return err
 		}
 		required, err := dependencies(current.Bytes, file.Path)

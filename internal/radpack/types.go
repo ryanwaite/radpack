@@ -39,12 +39,20 @@ type FileOperation struct {
 	After     *Fingerprint `json:"after"`
 }
 type Manifest struct {
-	FormatVersion int             `json:"formatVersion"`
-	Name          string          `json:"name"`
-	Upstream      Upstream        `json:"upstream"`
-	Application   string          `json:"application"`
-	RadiusVersion *string         `json:"radiusVersion"`
-	Files         []FileOperation `json:"files"`
+	FormatVersion int                `json:"formatVersion"`
+	Name          string             `json:"name"`
+	Upstream      Upstream           `json:"upstream"`
+	Application   string             `json:"application"`
+	RadiusVersion *string            `json:"radiusVersion"`
+	Files         []FileOperation    `json:"files"`
+	Integration   *IntegrationAssets `json:"integration,omitempty"`
+}
+
+// Version 2 packs record reusable integration entry points separately from
+// environment instances. Files still use the same reviewed operations.
+type IntegrationAssets struct {
+	Recipes     []string `json:"recipes"`
+	RecipePacks []string `json:"recipePacks"`
 }
 type Excluded struct {
 	Path   string `json:"path"`
@@ -57,6 +65,7 @@ type Review struct {
 	Blockers       []string        `json:"blockers"`
 	RadiusEvidence VersionEvidence `json:"radiusEvidence"`
 	BuildWarnings  []string        `json:"buildWarnings"`
+	Readiness      BuildReadiness  `json:"readiness"`
 }
 type Plan struct {
 	Review

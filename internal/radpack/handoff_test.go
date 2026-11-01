@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -413,6 +414,21 @@ func TestHandoffLongStatePaths(t *testing.T) {
 	worktree := filepath.Join(f.root, "long-state-worktree")
 	g(t, f.destination, "worktree", "add", "--quiet", "-b", "long-state", worktree, f.base)
 	status, err := HandoffStatusFor(ctx, worktree)
+	if err != nil && runtime.GOOS == "windows" {
+		common, commonErr := commonDirectory(ctx, f.destination)
+		check(t, commonErr)
+		candidate := filepath.Join(home, ".radpack", "handoffs", hash([]byte(common)), "candidate")
+		// Only this generated fixture is inspected. Do not enable raw Git
+		// diagnostics in production or inherit the operator's credential config.
+		command := exec.Command("git", "-c", "core.longpaths=true", "-C", candidate, "rev-parse", "--show-toplevel")
+		for _, key := range []string{"PATH", "SystemRoot", "TEMP", "TMP"} {
+			command.Env = append(command.Env, key+"="+os.Getenv(key))
+		}
+		command.Env = append(command.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+f.gitConfig,
+			"HOME="+home, "USERPROFILE="+home, "GIT_TERMINAL_PROMPT=0")
+		output, diagnosticErr := command.CombinedOutput()
+		t.Logf("Synthetic fixture Git discovery (candidate length %d): %v: %s", len(candidate), diagnosticErr, output)
+	}
 	check(t, err)
 	state, err := loadHandoff(ctx, worktree)
 	check(t, err)

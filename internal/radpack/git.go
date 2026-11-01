@@ -20,12 +20,17 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 func git(ctx context.Context, cwd string, args ...string) ([]byte, error) {
-	command := exec.CommandContext(ctx, "git", append([]string{
+	options := []string{
 		"-c", "core.hooksPath=" + os.DevNull, "-c", "protocol.ext.allow=never",
 		"-c", "core.fsmonitor=false", "-c", "core.autocrlf=false",
 		"-c", "core.longpaths=true",
-	}, args...)...)
-	command.Dir = cwd
+	}
+	// Let Git enter long Windows checkout paths after processing its options.
+	// Starting the process in that path can fail before long-path support is set.
+	if cwd != "" {
+		options = append(options, "-C", cwd)
+	}
+	command := exec.CommandContext(ctx, "git", append(options, args...)...)
 	skip := map[string]bool{"GIT_DIR": true, "GIT_WORK_TREE": true, "GIT_INDEX_FILE": true, "GIT_COMMON_DIR": true,
 		"GIT_OBJECT_DIRECTORY": true, "GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
 		"GIT_TERMINAL_PROMPT": true, "GIT_LFS_SKIP_SMUDGE": true, "GIT_PAGER": true}

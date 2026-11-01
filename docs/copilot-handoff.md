@@ -91,14 +91,20 @@ State lives under:
 ```text
 ~/.radpack/handoffs/<sha256-of-canonical-git-common-directory>/
   request.json
-  candidate/       verified assembled application and saved portable pack
   claim.json       created exclusively when a worktree claims the handoff
+~/.radpack/candidates/<request-id>/
+  ...              verified assembled application and saved portable pack
 ```
 
 The parent and request directories are created privately. Unix state directories
 must not be writable by other users, and symlinked state paths are refused.
 Windows relies on the user's profile access controls; Go permission bits are
 not treated as Windows ACL verification.
+
+The candidate repository lives separately from the longer clone-key path.
+This keeps its Git metadata discoverable on Windows while `core.longpaths`
+supports long payload file paths. The request ID selects the candidate; a
+request cannot supply an arbitrary candidate filesystem path.
 
 The request records an opaque random ID, the source clone's canonical directory,
 Git common directory, selected commit, pack hash, installation status, creation

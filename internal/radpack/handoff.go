@@ -129,6 +129,18 @@ func PrepareDesktopInstall(ctx context.Context, packDirectory, destination strin
 	if err := ensurePrivateDirectory(home); err != nil {
 		return "", err
 	}
+	candidates := filepath.Join(filepath.Dir(home), "candidates")
+	if err := ensurePrivateDirectory(candidates); err != nil {
+		return "", err
+	}
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		return "", err
+	}
+	requestID := hex.EncodeToString(random)
+	// Git discovers .git/HEAD before ordinary file operations. Keep the staged
+	// repository out of the deep clone-key directory so Windows can discover it.
+	candidate := filepath.Join(candidates, requestID)
 	// Stage and validate the complete resulting application before publishing
 	// a handoff. This shares the exact installer used by --no-open.
 	stage, err := os.MkdirTemp(home, ".prepare-")
@@ -136,17 +148,23 @@ func PrepareDesktopInstall(ctx context.Context, packDirectory, destination strin
 		return "", err
 	}
 	published := false
+	candidateCreated := false
 	defer func() {
 		if !published {
 			if err := os.RemoveAll(stage); err != nil {
 				resultErr = errors.Join(resultErr, fmt.Errorf("handoff staging cleanup failed: %w", err))
 			}
+			if candidateCreated {
+				if err := os.RemoveAll(candidate); err != nil {
+					resultErr = errors.Join(resultErr, fmt.Errorf("candidate cleanup failed: %w", err))
+				}
+			}
 		}
 	}()
-	candidate := filepath.Join(stage, "candidate")
 	if _, err := InstallPack(ctx, packDirectory, candidate, o); err != nil {
 		return "", err
 	}
+	candidateCreated = true
 	result, err := VerifyInstallation(ctx, "", candidate)
 	if err != nil {
 		return "", err
@@ -163,12 +181,8 @@ func PrepareDesktopInstall(ctx context.Context, packDirectory, destination strin
 		if err != nil {
 			return err
 		}
-		random := make([]byte, 16)
-		if _, err := rand.Read(random); err != nil {
-			return err
-		}
 		now := time.Now().UTC()
-		record := handoffRecord{1, hex.EncodeToString(random), canonical, common, o.SelectedCommit, pack.Digest,
+		record := handoffRecord{1, requestID, canonical, common, o.SelectedCommit, pack.Digest,
 			result.Status, now.Format(time.RFC3339), now.Add(7 * 24 * time.Hour).Format(time.RFC3339)}
 		// A path can later be reused for a different clone. Keep the request ID
 		// in Git's local metadata so an old request cannot bind to that new clone.
@@ -194,6 +208,7 @@ func PrepareDesktopInstall(ctx context.Context, packDirectory, destination strin
 
 type loadedHandoff struct {
 	directory string
+	candidate string
 	record    handoffRecord
 	pack      *Pack
 	receipt   Receipt
@@ -260,7 +275,10 @@ func loadHandoff(ctx context.Context, directory string) (*loadedHandoff, error) 
 	if identity == nil || string(identity.Bytes) != record.RequestID {
 		return nil, fmt.Errorf("source clone handoff identity changed")
 	}
-	candidate := filepath.Join(state, "candidate")
+	candidate := filepath.Join(filepath.Dir(home), "candidates", record.RequestID)
+	if err := validatePrivateDirectory(candidate); err != nil {
+		return nil, err
+	}
 	pack, err := LoadPack(filepath.Join(candidate, ".radpack", "pack"))
 	if err != nil {
 		return nil, err
@@ -341,7 +359,7 @@ func loadHandoff(ctx context.Context, directory string) (*loadedHandoff, error) 
 	if record.InstallationStatus == "adaptation-required" {
 		status.Warnings = append(status.Warnings, "Latest-source integration requires adaptation; this is not a validated graph of the selected application.")
 	}
-	loaded := &loadedHandoff{state, record, pack, receipt, status}
+	loaded := &loadedHandoff{state, candidate, record, pack, receipt, status}
 	if status.ModelSHA256 == "" {
 		loaded.status.Status = "blocked"
 		loaded.status.Warnings = append(status.Warnings, "The prepared latest-source snapshot has no application model. Use --no-open and resolve the adaptation before opening a graph.")
@@ -484,7 +502,7 @@ func ApplyHandoff(ctx context.Context, directory, requestID, approval string) (H
 	if err := savePrivateJSON(h.directory, "claim.json", handoffClaim{requestID, root, approval}); err != nil {
 		return h.status, fmt.Errorf("handoff already claimed or claim could not be saved: %w", err)
 	}
-	candidate := filepath.Join(h.directory, "candidate")
+	candidate := h.candidate
 	tree, err := treeAt(ctx, root, h.record.ApplicationCommit)
 	if err != nil {
 		return h.status, err

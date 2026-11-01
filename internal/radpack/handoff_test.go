@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -165,7 +164,7 @@ func TestHandoffTamperAndExpired(t *testing.T) {
 			check(t, err)
 			switch mode {
 			case "candidate":
-				write(t, filepath.Join(h.directory, "candidate"), "app.js", "tampered")
+				write(t, h.candidate, "app.js", "tampered")
 			case "request":
 				h.record.CommonDirectory = "wrong"
 				writeJSON(t, h.directory, "request.json", h.record)
@@ -400,39 +399,25 @@ func TestHandoffLongStatePaths(t *testing.T) {
 	f := newFixture(t, false)
 	home, err := canonicalDirectory(f.root)
 	check(t, err)
-	// The final state path includes a 64-character clone key. On Windows it can
-	// cross MAX_PATH after the shorter preparation directory is renamed.
-	// Keep the initial Git working directory below MAX_PATH, then cross the
-	// boundary in the renamed state's file paths, as the original failure did.
+	// A staged Git repository under the 64-character clone key used to exceed
+	// Git's Windows discovery limit. Keep that layout out of the candidate path,
+	// but still exercise tracked/untracked file paths beyond MAX_PATH.
 	home = filepath.Join(home, strings.Repeat("a", max(1, 160-len(home)-6)), "home")
 	check(t, os.MkdirAll(home, 0700))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	f.publish(t)
+	longFile := ".radius/" + strings.Repeat("c", 65) + ".txt"
+	write(t, f.source, longFile, "portable fixture")
+	f.publish(t, longFile)
 	_, err = InstallApplication(ctx, f.pack, ApplicationOptions{Directory: f.destination, Desktop: true}, nil)
 	check(t, err)
 	worktree := filepath.Join(f.root, "long-state-worktree")
 	g(t, f.destination, "worktree", "add", "--quiet", "-b", "long-state", worktree, f.base)
 	status, err := HandoffStatusFor(ctx, worktree)
-	if err != nil && runtime.GOOS == "windows" {
-		common, commonErr := commonDirectory(ctx, f.destination)
-		check(t, commonErr)
-		candidate := filepath.Join(home, ".radpack", "handoffs", hash([]byte(common)), "candidate")
-		// Only this generated fixture is inspected. Do not enable raw Git
-		// diagnostics in production or inherit the operator's credential config.
-		command := exec.Command("git", "-c", "core.longpaths=true", "-C", candidate, "rev-parse", "--show-toplevel")
-		for _, key := range []string{"PATH", "SystemRoot", "TEMP", "TMP"} {
-			command.Env = append(command.Env, key+"="+os.Getenv(key))
-		}
-		command.Env = append(command.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+f.gitConfig,
-			"HOME="+home, "USERPROFILE="+home, "GIT_TERMINAL_PROMPT=0")
-		output, diagnosticErr := command.CombinedOutput()
-		t.Logf("Synthetic fixture Git discovery (candidate length %d): %v: %s", len(candidate), diagnosticErr, output)
-	}
 	check(t, err)
 	state, err := loadHandoff(ctx, worktree)
 	check(t, err)
-	if len(filepath.Join(state.directory, "candidate", ".radius", "bicepconfig.json")) <= 260 {
+	if len(filepath.Join(state.candidate, filepath.FromSlash(longFile))) <= 260 {
 		t.Fatal("fixture did not exercise a file path beyond MAX_PATH")
 	}
 	if status.Status != "pending" {
@@ -440,4 +425,7 @@ func TestHandoffLongStatePaths(t *testing.T) {
 	}
 	_, err = ApplyHandoff(ctx, worktree, status.RequestID, status.ReviewSHA256)
 	check(t, err)
+	if read(t, worktree, longFile) != "portable fixture" {
+		t.Fatal("long-path payload was not applied")
+	}
 }

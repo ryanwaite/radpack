@@ -394,3 +394,27 @@ func TestDesktopRejectsWorkspaceExecutable(t *testing.T) {
 	t.Setenv("RADPACK_GITHUB_COMMAND", "relative/path")
 	fails(t, launchCopilot(ctx, f.source), "absolute")
 }
+
+func TestHandoffLongStatePaths(t *testing.T) {
+	f := newFixture(t, false)
+	home, err := canonicalDirectory(f.root)
+	check(t, err)
+	// The final state path includes a 64-character clone key. On Windows it can
+	// cross MAX_PATH after the shorter preparation directory is renamed.
+	home = filepath.Join(home, strings.Repeat("a", 70), strings.Repeat("b", 70), "home")
+	check(t, os.MkdirAll(home, 0700))
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	f.publish(t)
+	_, err = InstallApplication(ctx, f.pack, ApplicationOptions{Directory: f.destination, Desktop: true}, nil)
+	check(t, err)
+	worktree := filepath.Join(f.root, "long-state-worktree")
+	g(t, f.destination, "worktree", "add", "--quiet", "-b", "long-state", worktree, f.base)
+	status, err := HandoffStatusFor(ctx, worktree)
+	check(t, err)
+	if status.Status != "pending" {
+		t.Fatal(status)
+	}
+	_, err = ApplyHandoff(ctx, worktree, status.RequestID, status.ReviewSHA256)
+	check(t, err)
+}

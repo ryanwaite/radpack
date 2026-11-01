@@ -23,6 +23,7 @@ func git(ctx context.Context, cwd string, args ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, "git", append([]string{
 		"-c", "core.hooksPath=" + os.DevNull, "-c", "protocol.ext.allow=never",
 		"-c", "core.fsmonitor=false", "-c", "core.autocrlf=false",
+		"-c", "core.longpaths=true",
 	}, args...)...)
 	command.Dir = cwd
 	skip := map[string]bool{"GIT_DIR": true, "GIT_WORK_TREE": true, "GIT_INDEX_FILE": true, "GIT_COMMON_DIR": true,

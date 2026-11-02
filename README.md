@@ -80,10 +80,12 @@ Prebuilt release binaries are not yet published.
 
 Radius and its Canvas tools are separate prerequisites for modeling,
 visualization, and deployment. Radpack does not install them.
-The desktop handoff requires a Radius extension version that understands the
-Radpack handoff protocol; either the marketplace plugin or a local development
-build can supply it. If it is absent, use the app's Customize page to install it
-with the normal approval flow. Radpack does not replace development extensions.
+The desktop handoff currently requires a local Radius development build containing
+the Radpack handoff integration. Those companion changes have not yet been
+published in the marketplace plugin; installing the marketplace version alone
+does not enable the handoff. Until a supporting release is available, use that
+updated local build or install packs directly with `--no-open`.
+Radpack does not replace development extensions or install a duplicate plugin.
 
 ## Try your first local pack
 
@@ -342,7 +344,9 @@ This applies the pack immediately to the new checkout and does not launch the
 app or write handoff state. It is the appropriate mode for automation and for
 using a Radius extension that does not yet support the handoff.
 
-Default desktop installation saves private staging under `~/.radpack/handoffs/`.
+Default desktop installation saves requests and claims under `~/.radpack/handoffs/`
+and staged applications under `~/.radpack/candidates/`. Both locations are local
+state outside the application repository.
 The app session must use a clean linked worktree of the prepared clone at the
 recorded commit. Existing setup-script output, user edits, or an unexpected
 revision block application rather than being overwritten. The user still starts

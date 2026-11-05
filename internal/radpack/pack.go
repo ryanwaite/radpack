@@ -197,6 +197,22 @@ func PlanCreate(ctx context.Context, o CreateOptions) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	bound, err := boundApplication(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	if bound != nil {
+		if o.Upstream != "" {
+			explicit, err := repositoryURL(o.Upstream)
+			if err != nil {
+				return nil, err
+			}
+			if explicit != bound.Repository {
+				return nil, fmt.Errorf("deployment fork must not replace the original application identity")
+			}
+		}
+		o.Upstream = bound.Repository
+	}
 	if !commitPattern.MatchString(o.Base) {
 		return nil, fmt.Errorf("--base must be the full 40-character upstream commit SHA")
 	}

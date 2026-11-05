@@ -6,12 +6,23 @@ concurrency checks. Keep the CLI free
 of cloud side effects: create/install/verify must not provision environments,
 register credentials, run payload scripts, or deploy.
 
+Personal fork setup is an explicitly approved GitHub operation, separate from
+create/save and publish. Develop it against mocked GitHub responses and temporary
+Git repositories. Never create a contributor's real fork, enable Actions, push
+prepared source, or run cloud readiness probes as part of tests. Preserve the
+original source identity in packs and the deployment repository only in local
+Git metadata. Test account drift, repository replacement, remote conflicts,
+partial failures, and retry without duplicate creation.
+
 ## Contributing an application pack
 
 Start with a manually prepared application. Do not submit a generated graph or
 untested model as though it were a deployment-verified pack.
 
 1. Choose the application repository consumers should clone.
+   `radpack create owner/repo` can clone it and record the baseline before
+   preparation; use `--resume <checkout>` to return later. Existing prepared
+   checkouts can still use plain `radpack create`.
 2. Create the Radius model, reusable recipes, and any application adaptations.
    Keep the environment identifier and credentials as deployment inputs.
 3. Verify the application in your author environment using the Radius tools.
@@ -89,6 +100,19 @@ checkout. Keep prompts terminal-only and confirmation default-no. Tests should
 cover redirected streams, EOF/cancellation, local-only commits, fork ambiguity,
 and file changes during review. Never assume that `main` is the default branch
 or that all differences from upstream belong in a pack.
+
+URL-first authoring keeps its record in Git-local metadata. Exercise restart
+from another current directory, EOF/cancellation, saved-output verification,
+baseline preservation, and worktree selection. Never infer that a graph file
+means deployment verification, and never publish as a side effect of save.
+Use mock GitHub APIs for the default deployment stage: prove fork-first creation
+does not query upstream administration, while `--use-source` requires it and
+never falls back to a fork. Cover retained legacy choices, unavailable/SAML
+access, separate fork approval, named/reused forks, remembered local-only choice,
+and pending-operation retries. `--status` must remain
+read-only, and neither `--fork` nor pack-save approval may create a fork without
+fork consent. Local-only authoring fixtures should explicitly use `--no-fork`
+so they cannot depend on a contributor's live GitHub account.
 
 ## Updating a pack to newer source
 

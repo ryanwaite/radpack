@@ -148,6 +148,7 @@ Pending and applied responses include:
 | `requestId` | Opaque request identifier |
 | `reviewSha256` | Approval fingerprint for this exact worktree; preserved in successful apply responses and applied status |
 | `repository` | Canonical source repository URL |
+| `deploymentRepository` | Optional personal fork URL recorded by explicit fork setup; does not replace source provenance |
 | `applicationCommit` | Exact required source commit |
 | `packManifestSha256` | Hash of the portable pack manifest |
 | `modelPath` | `.radius/app.bicep` or `app.bicep` |
@@ -165,6 +166,13 @@ Before application, the review fingerprint binds the returned context to the
 worktree, request, selected revision, model, operations, and warnings.
 For latest-source conflicts, the review describes the preserved upstream file as
 `retain`, rather than suggesting the older pack's replacement will be applied.
+
+After `radpack fork`, the local binding permits the personal fork as `origin`
+and requires the original application as `upstream`. Handoff identity still
+checks the exact clone, worktree, source revision, and approved pack. A pending
+review hash changes when the deployment binding changes. The Radius session
+must refresh its repository context and readiness before creating an environment;
+the original `repository` field is not an environment destination.
 
 The original source clone can be inspected for launch/resume guidance, but cannot
 receive the overlay through this protocol. Application requires a linked worktree

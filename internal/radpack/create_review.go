@@ -120,6 +120,7 @@ func printCreateReview(out io.Writer, p *Plan, output, sourceNote string) {
 		}
 	}
 	fmt.Fprintln(out, "\nDeployment verification: not established by Radpack. A graph or origin record is not a deployment test.")
+	fmt.Fprintln(out, "For GitHub-based Radius deployment, use a repository you administer. `radpack fork --directory <checkout>` can prepare a personal fork without changing the pack's original application identity.")
 	fmt.Fprintln(out, "Review selected file contents before saving. Secret detection is best-effort; credentials and environment state do not belong in a pack.")
 }
 
@@ -141,6 +142,14 @@ func selection(answer string, candidates []string) ([]string, error) {
 }
 
 func createCommand(ctx context.Context, values map[string][]string, out io.Writer, ui *createUI) (err error) {
+	return createCommandWithSave(ctx, values, out, ui, nil)
+}
+
+// saved records successful output for a durable authoring workflow. A failure
+// here must not suggest the already-written pack should be recreated.
+type saveObserver func(output, reviewSHA string) error
+
+func createCommandWithSave(ctx context.Context, values map[string][]string, out io.Writer, ui *createUI, saved saveObserver) (err error) {
 	get := func(key string) string {
 		if len(values[key]) > 0 {
 			return values[key][0]
@@ -148,7 +157,7 @@ func createCommand(ctx context.Context, values map[string][]string, out io.Write
 		return ""
 	}
 	if get("json") != "" {
-		return createJSONCommand(ctx, values, out)
+		return createJSONCommandWithSave(ctx, values, out, saved)
 	}
 	if get("approve") != "" && get("dry-run") != "" {
 		return fmt.Errorf("use --dry-run or --approve, not both")
@@ -246,6 +255,11 @@ func createCommand(ctx context.Context, values map[string][]string, out io.Write
 	}
 	if _, err := WritePack(fresh, output, approval); err != nil {
 		return err
+	}
+	if saved != nil {
+		if err := saved(output, approval); err != nil {
+			return fmt.Errorf("pack saved at %s, but authoring checkpoint could not be recorded; inspect the output instead of recreating it: %w", output, err)
+		}
 	}
 	fmt.Fprintf(out, "\nCreated %s. Deployment verification remains unverified by Radpack.\n", output)
 	return nil

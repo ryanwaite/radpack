@@ -36,20 +36,21 @@ type handoffClaim struct {
 }
 
 type HandoffStatus struct {
-	ProtocolVersion    int             `json:"protocolVersion"`
-	Status             string          `json:"status"`
-	RequestID          string          `json:"requestId,omitempty"`
-	ReviewSHA256       string          `json:"reviewSha256,omitempty"`
-	Repository         string          `json:"repository,omitempty"`
-	ApplicationCommit  string          `json:"applicationCommit,omitempty"`
-	PackManifestSHA256 string          `json:"packManifestSha256,omitempty"`
-	ModelPath          string          `json:"modelPath,omitempty"`
-	ModelSHA256        string          `json:"modelSha256,omitempty"`
-	InstallationStatus string          `json:"installationStatus,omitempty"`
-	SourceDirectory    string          `json:"sourceDirectory,omitempty"`
-	WorktreeDirectory  string          `json:"worktreeDirectory,omitempty"`
-	Files              []FileOperation `json:"files,omitempty"`
-	Warnings           []string        `json:"warnings"`
+	ProtocolVersion      int             `json:"protocolVersion"`
+	Status               string          `json:"status"`
+	RequestID            string          `json:"requestId,omitempty"`
+	ReviewSHA256         string          `json:"reviewSha256,omitempty"`
+	Repository           string          `json:"repository,omitempty"`
+	DeploymentRepository string          `json:"deploymentRepository,omitempty"`
+	ApplicationCommit    string          `json:"applicationCommit,omitempty"`
+	PackManifestSHA256   string          `json:"packManifestSha256,omitempty"`
+	ModelPath            string          `json:"modelPath,omitempty"`
+	ModelSHA256          string          `json:"modelSha256,omitempty"`
+	InstallationStatus   string          `json:"installationStatus,omitempty"`
+	SourceDirectory      string          `json:"sourceDirectory,omitempty"`
+	WorktreeDirectory    string          `json:"worktreeDirectory,omitempty"`
+	Files                []FileOperation `json:"files,omitempty"`
+	Warnings             []string        `json:"warnings"`
 }
 
 func handoffHome() (string, error) {
@@ -374,16 +375,15 @@ func loadHandoff(ctx context.Context, directory string) (*loadedHandoff, error) 
 		loaded.status.Warnings = append(status.Warnings, "Session checkout is not at the prepared application commit. Create a session at the recorded revision; no files were changed.")
 		return loaded, nil
 	}
-	origin, err := gitText(ctx, root, "config", "--get", "remote.origin.url")
+	if err := verifyApplicationOrigin(ctx, root, pack.Manifest.Upstream.Repository); err != nil {
+		return nil, err
+	}
+	binding, err := readDeploymentBinding(ctx, root)
 	if err != nil {
 		return nil, err
 	}
-	origin, err = repositoryURL(origin)
-	if err != nil {
-		return nil, err
-	}
-	if origin != pack.Manifest.Upstream.Repository {
-		return nil, fmt.Errorf("checkout origin differs from handoff source")
+	if binding != nil {
+		loaded.status.DeploymentRepository = binding.Repository
 	}
 	claimFile, err := readRegular(state, "claim.json")
 	if err != nil {

@@ -235,16 +235,8 @@ func VerifyInstallation(ctx context.Context, packDirectory, directory string) (*
 	if err != nil {
 		return nil, err
 	}
-	origin, err := gitText(ctx, root, "config", "--get", "remote.origin.url")
-	if err != nil {
+	if err := verifyApplicationOrigin(ctx, root, p.Manifest.Upstream.Repository); err != nil {
 		return nil, err
-	}
-	origin, err = repositoryURL(origin)
-	if err != nil {
-		return nil, err
-	}
-	if origin != p.Manifest.Upstream.Repository {
-		return nil, fmt.Errorf("installed origin differs from pack upstream")
 	}
 	file, err := readRegular(root, receiptPath)
 	if err != nil {

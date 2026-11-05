@@ -327,6 +327,10 @@ be overwritten by a blind retry. Source ambiguity, model absence, and policy
 failures return nonzero with a machine-readable diagnostic and next action.
 Invalid command syntax is rejected before a report can be produced.
 
+A resumed URL-authoring save can instead report `saved-with-checkpoint-error`
+when the pack was written but its workflow completion could not be recorded.
+Inspect the existing output rather than blindly recreating it.
+
 `report <pack-directory>` and `report --directory <installed-checkout>` emit
 `reportVersion: 1`, `command: "report"`, pack hash, application revision, portable
 format version, file-verification state, installation status, and `readiness`.
@@ -350,3 +354,129 @@ Pack-only reporting does not fetch retained source files. Their absent contents
 produce `retained-content-not-inspected` findings instead of an inferred pass.
 Reporting, saving, and publication remain separate: none of these commands
 publishes a pack, a recipe, or prepared application source.
+
+## URL-first authoring records
+
+`create <GitHub URL>` clones a new source checkout, resolves an exact published
+starting commit, and writes `radpack-authoring/request.json` inside its Git
+common directory. This is local Git metadata, not `.radpack/` application
+content. Git does not push it and Radpack never packages it. Linked worktrees
+share this record.
+
+The version 1 authoring record contains the original `upstream` repository and
+commit, canonical `sourceDirectory` and `commonDirectory`, absolute pack `output`,
+pack `name`, nullable `radiusVersion`, explicit `include` paths, recipe/recipe-pack
+selections under `integration`, and `createdAt`. It contains no cloud environment
+or credential data. The recorded baseline stays fixed after upstream or local
+branches advance.
+
+`radpack-authoring/deployment-choice.json` separately records `formatVersion: 1`,
+`mode` (`fork`, `source`, `skip`, or legacy `auto`), and an optional fork `name`
+(empty when unspecified). New URL workflows default to `fork`; records without
+this file also use fork-first setup. Existing records retain their choice,
+including the legacy administrator-first `auto` policy. A terminal decline or
+`--no-fork` persists `skip`. EOF preserves the pending choice. This record is
+local Git metadata and never part of a portable pack.
+
+Before Radification, `fork` reviews the personal fork without checking upstream
+administrator permission. `--use-source` records `source`, which requires an
+active source administrable by the selected account. Missing or unknown access
+returns `awaiting-github-access`, without falling back to a fork. Legacy `auto`
+still checks source administration first, offering a fork only when metadata
+establishes the source is unsuitable. No mode bypasses GitHub authorization
+for fork creation or authorizes mutation by itself. Terminal confirmation
+or `--resume --fork-approve <sha>` delegates to the existing fork operation,
+including its review hash, journal, and identity checks. `--approve` remains
+pack-save approval only. Pending/completed deployment bindings take precedence
+over a remembered skip; explicit `--no-fork` or `--use-source` cannot abandon
+such a binding. `--fork` explicitly switches an older workflow to fork-first.
+
+`create --resume <checkout>` validates that record and the clone identity. A
+linked worktree can be selected with `--source`, or by giving its path directly
+to `--resume`. Multiple linked checkouts require an explicit choice; the tool
+never assumes the original clone contains the author's later Radius work.
+Selecting an unrelated clone is refused.
+
+The workflow saves progress before prompting for Radification. Closing stdin,
+exiting the terminal, or pressing q preserves the checkout. Pressing Enter
+rechecks the model and available worktrees, then uses the existing pack-review
+and approval path. No scripts, agent prompts, environment creation, or publishing
+are triggered by that pause or continuation.
+
+URL-started JSON/redirected invocations return immediately with
+`awaiting-fork-approval`, `awaiting-github-access`, or `awaiting-radification`.
+Resume can also return `awaiting-deployment-choice`, `awaiting-radification`,
+`awaiting-worktree-selection`, or the existing create review report. Read-only
+`--resume ... --status` never probes GitHub or changes the deployment choice.
+It first reports locally unresolved setup, then reports `ready-for-review` when
+setup is recorded as complete/skipped and a model file is present; this is not
+policy, compiler, or deployment validation. A source-admin observation is not
+cached as authorization: without a binding or skip, status reports
+`awaiting-deployment-choice` and normal resume rechecks the account.
+
+Authoring reports have `reportVersion: 1`, `command: "create"`, `status`, `stage`,
+`source`, `application` (original repository/commit), `output`, optional selected
+`worktree`, available `worktrees`, `resumeArgs`, and structured diagnostics.
+Optional `repositorySetup` contains setup `status`, `repository`, `reviewSha256`,
+the complete fork `review`, `message`, and `nextAction` when applicable. Its
+`ready` status identifies the chosen repository, not full deployment readiness.
+`publication` and `deploymentVerification` are `not-performed`; `credentials`
+is `not-inspected`. Terminal responses do not need to be parsed by an agent.
+
+Review/save is serialized with a Git-local `review.lock`. A process interruption
+may leave that file behind; inspect the process and output before manually
+removing it. It is not automatically discarded on another process's behalf.
+
+After save, `saved.json` records its format version, output path, manifest hash,
+approved review hash, and authoring worktree. Resume verifies the saved pack and
+reports `saved` without creating another output. A missing, tampered, or relocated
+record/output fails visibly. To create a different pack after completion, use the
+ordinary existing-checkout create flow. This version does not move an authoring
+workflow automatically when its original clone is relocated or deleted.
+
+## Local deployment repository binding
+
+A personal deployment fork is not a new application source. `radpack fork`
+records its choice in `radpack-deployment.json` inside the clone's Git common
+directory, shared by linked worktrees. It never writes the binding into an
+application file, portable manifest, or installed receipt.
+
+The version 1 binding records canonical Git common directory, original
+application repository/commit, personal deployment repository, GitHub account
+login/ID, verified destination repository ID, reviewed remote URLs, approval
+hash, operation status (`pending` or `ready`), and whether fork creation has
+already been requested. It stores no credential or environment values.
+
+Setup writes the pending record before GitHub mutation. Ambiguous creation
+results are reconciled by reading the expected personal repository rather than
+repeating the request. Explicit creation refusals (401, 403, 404, or 422) release
+the local pending record because neither the fork nor local routing was changed;
+the user can correct access or choose another name and review again. A known repository ID
+cannot silently be replaced by a newly created repository with the same name.
+An exclusive Git-local `radpack-fork.lock` prevents concurrent setup; interrupted
+locks require inspection rather than automatic removal.
+
+After verifying fork ownership, ancestry, administrator permission, and baseline
+availability, setup preserves the original application as `upstream` and sets
+the approved personal fork as `origin`. Remotes with conflicting URLs or explicit
+push routing are refused. Partial local remote updates can be resumed only if
+they match the recorded before/after values.
+
+Verification permits a different origin only with a valid ready binding and
+the exact recorded source/deployment remotes. Packs and receipts still carry
+the original application identity. Changing origin manually does not disable
+this invariant. Pending bindings refuse normal packaging/verification until the
+fork operation is resolved.
+
+The handoff status may include an optional `deploymentRepository` URL alongside
+the original `repository`. A changed deployment binding changes a pending review
+hash. Radius should use its refreshed workspace repository selection for
+environment setup, not reinterpret the pack's original application identity.
+Existing protocol consumers may ignore this added display field.
+
+Fork setup changes repository routing, not cloud setup. A user must explicitly
+reopen the same Radius canvas instance with an explicit fork repository and
+environment page, then obtain new readiness/selection evidence before
+creating environments. OIDC identity, workflows, and state packages belong to
+that selected deployment repository. The command does not push prepared source,
+create or modify environments, or change Actions policy.

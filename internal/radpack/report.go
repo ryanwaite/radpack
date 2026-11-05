@@ -124,6 +124,10 @@ type CreateReport struct {
 }
 
 func createJSONCommand(ctx context.Context, values map[string][]string, out io.Writer) (resultErr error) {
+	return createJSONCommandWithSave(ctx, values, out, nil)
+}
+
+func createJSONCommandWithSave(ctx context.Context, values map[string][]string, out io.Writer, saved saveObserver) (resultErr error) {
 	get := func(key string) string {
 		if len(values[key]) > 0 {
 			return values[key][0]
@@ -133,15 +137,17 @@ func createJSONCommand(ctx context.Context, values map[string][]string, out io.W
 	result := CreateReport{ReportVersion: 1, Command: "create", Status: "blocked", Stage: "source", Diagnostics: []ReadinessIssue{}}
 	defer func() {
 		if resultErr != nil {
-			if result.Status == "saved" {
+			if result.Status == "saved-with-checkpoint-error" {
+				// The output is durable even though recording the workflow failed.
+			} else if result.Status == "saved" {
 				result.Status = "saved-with-cleanup-error"
 			} else {
 				result.Status = "blocked"
 			}
 			code := "create-" + result.Stage + "-failed"
 			next := "Resolve the reported issue and rerun create --json. No publication or deployment has occurred."
-			if result.Status == "saved-with-cleanup-error" {
-				next = "The pack was saved. Inspect the cleanup error; do not overwrite or recreate the existing output."
+			if strings.HasPrefix(result.Status, "saved-with-") {
+				next = "The pack was saved. Inspect the reported error; do not overwrite or recreate the existing output."
 			}
 			if result.Stage == "source" {
 				next = "Confirm repository access and specify --upstream or --base if source selection is ambiguous. Credentials were not inspected."
@@ -218,5 +224,12 @@ func createJSONCommand(ctx context.Context, values map[string][]string, out io.W
 		return err
 	}
 	result.Status = "saved"
+	if saved != nil {
+		if err := saved(result.Output, get("approve")); err != nil {
+			result.Stage = "checkpoint"
+			result.Status = "saved-with-checkpoint-error"
+			return fmt.Errorf("pack saved but authoring checkpoint failed: %w", err)
+		}
+	}
 	return nil
 }

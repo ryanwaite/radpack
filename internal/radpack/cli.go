@@ -10,6 +10,10 @@ import (
 
 const help = `Radpack - set up cloud-native apps, explore their architecture, and deploy to your cloud of choice with Radius
 
+  radpack create <github-url|owner/repo> [--directory <new-checkout>] [--output <pack-directory>] [--json]
+                 [--fork | --no-fork | --use-source] [--fork-name <name>]
+  radpack create --resume <checkout> --fork-approve <fork-review-sha> [--json]
+  radpack create --resume <authoring-checkout> [--source <linked-worktree>] [--status] [--json]
   radpack create [--base <full-sha>] [--source <repo>] [--output <pack-directory>]
                  [--upstream <owner/repo>] [--name <name>] [--include <file>]...
                  [--recipe <file>]... [--recipe-pack <file>]...
@@ -17,6 +21,8 @@ const help = `Radpack - set up cloud-native apps, explore their architecture, an
   radpack inspect <pack-directory>
   radpack report <pack-directory>
   radpack report --directory <installed-directory>
+  radpack fork [--directory <checkout>] [--name <personal-fork-name>]
+               [--dry-run | --approve <review-sha>] [--json]
   radpack install <owner/repo|github-url|pack-directory> [--directory <new-directory>]
                   [--pack <local-directory|github-tree-url> | --pack-path <repo-directory>]
                   [--latest --adapt] [--no-open]
@@ -26,6 +32,10 @@ const help = `Radpack - set up cloud-native apps, explore their architecture, an
   radpack verify [<pack-directory>] --directory <installed-directory>
 
 Create infers a published source revision and asks before saving in a terminal.
+Create with a GitHub URL is fork-first: clone, review a personal fork, then Radify.
+Forks require consent. --no-fork remembers local work; --use-source checks source
+administration instead. No upstream administrator check runs in fork-first mode.
+Resume later with --resume; --status inspects authoring progress without saving.
 Noninteractive create only previews unless --approve matches the review SHA.
 Output defaults to ./contrib/<pack-name>. Existing destinations are never reused.
 Install never creates Radius environments, executes pack scripts, or deploys.
@@ -34,6 +44,8 @@ Radius authoring handoff, NOT an automatically adapted or deployment-ready app.
 Verify checks file reproduction, not Radius compilation or cloud functionality.
 Create detects Radius releases from compiler pins and matching origin records.
 Install warns about local Radius version mismatches; it does not block or upgrade.
+Fork setup asks before creating/reusing a personal GitHub fork and changing
+shared remotes. It preserves application provenance and never pushes local code.
 Default install prepares a clean clone and opens a Copilot App session draft.
 Start the session, then approve applying the pack in Radius. --no-open installs
 directly without launching the app. Plugin setup and sign-in remain user actions.
@@ -43,9 +55,10 @@ directly without launching the app. Plugin setup and sign-in remain user actions
 // CLI without adding a runtime or external command framework dependency.
 func parseOptions(command string, args []string) (map[string][]string, []string, error) {
 	schemas := map[string]map[string]bool{
-		"create":  {"source": false, "base": false, "output": false, "upstream": false, "name": false, "include": false, "recipe": false, "recipe-pack": false, "radius-version": false, "dry-run": true, "approve": false, "json": true},
+		"create":  {"source": false, "base": false, "output": false, "upstream": false, "name": false, "include": false, "recipe": false, "recipe-pack": false, "radius-version": false, "dry-run": true, "approve": false, "json": true, "directory": false, "resume": false, "status": true, "fork": true, "no-fork": true, "use-source": true, "fork-name": false, "fork-approve": false},
 		"inspect": {},
 		"report":  {"directory": false},
+		"fork":    {"directory": false, "name": false, "dry-run": true, "approve": false, "json": true},
 		"install": {"directory": false, "pack": false, "pack-path": false, "latest": true, "adapt": true, "no-open": true},
 		"open":    {"directory": false},
 		"handoff": {"directory": false, "json": true, "request-id": false, "approve": false},
@@ -123,9 +136,49 @@ func runWithUI(ctx context.Context, args []string, out io.Writer, probe radiusVe
 		}
 		return ""
 	}
+	if command == "fork" {
+		if len(positions) != 0 {
+			return fmt.Errorf("fork takes --directory, not a positional repository")
+		}
+		return forkCommand(ctx, values, out, ui, callGitHub)
+	}
 	if command == "create" {
-		if len(positions) > 0 {
-			return fmt.Errorf("create takes options, not positional arguments")
+		if err := validateCreateForkOptions(values, len(positions) > 0); err != nil {
+			return err
+		}
+		if len(positions) > 1 {
+			return fmt.Errorf("create accepts at most one GitHub repository")
+		}
+		if len(positions) == 1 {
+			for _, key := range []string{"resume", "source", "upstream", "status", "approve", "dry-run"} {
+				if _, ok := values[key]; ok {
+					return fmt.Errorf("create with a URL cannot use --%s; clone first, then resume to review or save", key)
+				}
+			}
+			return authoringCommand(ctx, positions[0], values, out, ui)
+		}
+		if _, ok := values["resume"]; ok {
+			if get("resume") == "" {
+				return fmt.Errorf("--resume requires an authoring checkout path")
+			}
+			if _, ok := values["directory"]; ok {
+				return fmt.Errorf("--directory selects a new URL checkout; use --source to choose a linked worktree on resume")
+			}
+			if get("status") != "" && (get("approve") != "" || get("dry-run") != "") {
+				return fmt.Errorf("--status cannot be combined with save or preview approval options")
+			}
+			return authoringCommand(ctx, "", values, out, ui)
+		}
+		if _, ok := values["directory"]; ok {
+			return fmt.Errorf("--directory requires a GitHub repository argument")
+		}
+		if get("status") != "" {
+			return fmt.Errorf("--status requires --resume")
+		}
+		for _, key := range []string{"fork", "no-fork", "fork-name", "fork-approve", "use-source"} {
+			if _, ok := values[key]; ok {
+				return fmt.Errorf("--%s requires a URL-started or resumed authoring workflow; use radpack fork for an independent checkout", key)
+			}
 		}
 		return createCommand(ctx, values, out, ui)
 	}

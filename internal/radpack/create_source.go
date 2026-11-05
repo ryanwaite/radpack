@@ -84,6 +84,25 @@ func prepareCreateSource(ctx context.Context, o CreateOptions, ui *createUI) (re
 	if err != nil {
 		return nil, err
 	}
+	bound, err := boundApplication(ctx, o.Source)
+	if err != nil {
+		return nil, err
+	}
+	if bound != nil {
+		if o.Upstream != "" {
+			explicit, err := repositoryURL(o.Upstream)
+			if err != nil {
+				return nil, err
+			}
+			if explicit != bound.Repository {
+				return nil, fmt.Errorf("checkout has a recorded original application source; do not package the personal deployment fork as upstream")
+			}
+		}
+		o.Upstream = bound.Repository
+		if o.Base == "" {
+			o.Base = bound.Commit
+		}
+	}
 	if o.Upstream == "" {
 		repositories, err := sourceRepositories(ctx, o.Source)
 		if err != nil {

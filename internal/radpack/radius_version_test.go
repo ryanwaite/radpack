@@ -11,6 +11,24 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if mode := os.Getenv("RADPACK_GITHUB_API_TEST_HELPER"); mode != "" {
+		args := strings.Join(os.Args[1:], " ")
+		if !strings.HasPrefix(args, "api --hostname github.com --include --method ") {
+			os.Exit(3)
+		}
+		switch mode {
+		case "user":
+			fmt.Print("HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"login\":\"personal-user\",\"id\":42,\"type\":\"User\"}")
+		case "denied":
+			fmt.Print("HTTP/2.0 403 Forbidden\r\nContent-Type: application/json\r\n\r\n{\"message\":\"sensitive-content-not-for-output\"}")
+			fmt.Fprintln(os.Stderr, "private stderr-not-for-output")
+			os.Exit(1)
+		default:
+			fmt.Print("unreadable-sensitive-content")
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if mode := os.Getenv("RADPACK_DESKTOP_TEST_HELPER"); mode != "" {
 		if (len(os.Args) != 3 && len(os.Args) != 4) || os.Args[1] != "open" ||
 			(len(os.Args) == 4 && os.Args[2] != "--new") || !filepath.IsAbs(os.Args[len(os.Args)-1]) {

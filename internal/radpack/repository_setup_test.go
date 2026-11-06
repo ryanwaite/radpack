@@ -437,6 +437,77 @@ func TestIndependentSnapshotBlocksSecretsAndLFS(t *testing.T) {
 	}
 }
 
+func TestSnapshotLocalTutorialCredentialURLs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		text    string
+		allowed bool
+	}{
+		{"aks-documentdb", `mongosh "mongodb://username:password@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"`, true},
+		{"ipv4", "mongodb://username:password@127.0.0.1:10260/db", true},
+		{"ipv6", "mongodb://username:password@[::1]:10260/db", true},
+		{"multiple-examples", "amqp://username:password@localhost\nmongodb://username:password@127.0.0.1/db", true},
+		{"real-local-password", "mongodb://username:actual-sensitive-value@localhost/db", false},
+		{"remote", "mongodb://username:password@database.example.com/db", false},
+		{"host-suffix", "mongodb://username:password@localhost.evil.example/db", false},
+		{"extra-userinfo", "mongodb://username:password@localhost@evil.example/db", false},
+		{"missing-host", "mongodb://username:password@", false},
+		{"mixed", "mongodb://username:password@localhost/db\nhttps://someone:actual-sensitive-value@example.com", false},
+		{"token-alongside-example", "mongodb://username:password@localhost/db\ntoken: ghp_" + strings.Repeat("a", 30), false},
+		{"binary", "mongodb://username:password@localhost/db\x00", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, api, _ := independentFixture(t)
+			write(t, f.source, "src/makeline-service/README.md", tc.text)
+			g(t, f.source, "add", "src/makeline-service/README.md")
+			g(t, f.source, "commit", "--quiet", "-m", "Documentation fixture")
+			report, err := startDeploymentReview(t, f, nil, api.call)
+			if !tc.allowed {
+				fails(t, err, "source-publication blocker")
+				if strings.Contains(err.Error(), "actual-sensitive-value") || strings.Contains(err.Error(), strings.Repeat("a", 30)) {
+					t.Fatal("error revealed credential")
+				}
+				return
+			}
+			check(t, err)
+			if report.Status != "awaiting-repository-approval" || api.creates != 0 {
+				t.Fatal(report)
+			}
+			warnings := strings.Join(report.RepositorySetup.PublicationReview.Warnings, "\n")
+			if !strings.Contains(warnings, "local tutorial credential URL") {
+				t.Fatal(warnings)
+			}
+			// Portable pack policy remains strict for the very same text.
+			findings, err := inspectContent([]byte(tc.text), "src/makeline-service/README.md")
+			check(t, err)
+			if !strings.Contains(strings.Join(findings, "\n"), "credential-bearing URL") {
+				t.Fatal("snapshot exception weakened pack policy")
+			}
+		})
+	}
+}
+
+func TestAuthoringPublicationErrorPrintedOnlyByCLI(t *testing.T) {
+	f, api, _ := independentFixture(t)
+	write(t, f.source, "README.md", "mongodb://username:actual-sensitive-value@localhost/db")
+	g(t, f.source, "add", "README.md")
+	g(t, f.source, "commit", "--quiet", "-m", "Blocked documentation fixture")
+	var out strings.Builder
+	err := authoringWorkflowWithAPI(ctx, repo, map[string][]string{"directory": {f.destination}}, &out, nil, true, api.call)
+	fails(t, err, "source-publication blocker")
+	if strings.Contains(out.String(), "source-publication blocker") ||
+		!strings.Contains(out.String(), "do not reclone") || !strings.Contains(out.String(), "Authoring status: blocked") {
+		t.Fatal(out.String())
+	}
+	// The CLI is responsible for the returned error; JSON must retain it too.
+	report, err := resumeDeploymentReview(t, f, nil, api.call)
+	fails(t, err, "source-publication blocker")
+	if report.RepositorySetup.Message != err.Error() || len(report.Diagnostics) == 0 ||
+		report.Diagnostics[len(report.Diagnostics)-1].Message != err.Error() {
+		t.Fatal("JSON diagnostics lost error detail", report)
+	}
+}
+
 func TestIndependentRejectsInvalidOptionCombinations(t *testing.T) {
 	for _, args := range [][]string{
 		{"create", repo, "--repository-approve", strings.Repeat("a", 64)},

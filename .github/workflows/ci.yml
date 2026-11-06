@@ -25,7 +25,8 @@ jobs:
       - if: runner.os == 'Windows'
         name: Check staged long-path regression
         run: go test ./internal/radpack -run TestHandoffLongStatePaths -count=1 -v
-      - run: go test ./...
+      # Windows Git subprocess fixtures can exceed Go's default ten-minute suite limit.
+      - run: go test -timeout=20m ./...
       - run: go build ./cmd/radpack
       - if: runner.os == 'Linux'
         run: go test -race ./...

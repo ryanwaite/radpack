@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -47,6 +49,35 @@ func repositoryReviewHash(review RepositoryReview) (string, error) {
 		return "", err
 	}
 	return hash(data), nil
+}
+
+// Only the literal tutorial pair on an exact loopback host is downgraded.
+// Inspect every match: an example must never mask a second, real credential.
+func onlyLocalTutorialURLs(text, pattern string) bool {
+	matches := regexp.MustCompile(pattern).FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return false
+	}
+	for _, match := range matches {
+		end := match[1]
+		for end < len(text) && !strings.ContainsRune("/?# \t\r\n\"'`<>", rune(text[end])) {
+			end++
+		}
+		parsed, err := url.Parse(text[match[0]:end])
+		if err != nil || parsed.User == nil || parsed.User.Username() != "username" {
+			return false
+		}
+		password, ok := parsed.User.Password()
+		if !ok || password != "password" {
+			return false
+		}
+		switch strings.ToLower(parsed.Hostname()) {
+		case "localhost", "127.0.0.1", "::1":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Inspect only the recorded upstream tree, never the worktree or its index.
@@ -100,11 +131,17 @@ func inspectSnapshot(ctx context.Context, root string, source Upstream) (string,
 		if strings.HasPrefix(string(data), "version https://git-lfs.github.com/spec/v1") {
 			return "", nil, nil, fmt.Errorf("snapshot contains Git LFS pointer %s; copying its pointer would not publish the asset", file)
 		}
-		// These high-confidence signatures block publication even in binary files.
+		localTutorialURL := false
+		// These signatures block publication even in binary files.
 		for _, rule := range contentRules {
 			switch rule.name {
 			case "private key", "GitHub token", "npm token", "AWS access key", "credential-bearing URL", "JWT-like token", "SAS or storage credential":
 				if match(rule.pattern, string(data)) {
+					if rule.name == "credential-bearing URL" && utf8.Valid(data) &&
+						!strings.ContainsRune(string(data), '\x00') && onlyLocalTutorialURLs(string(data), rule.pattern) {
+						localTutorialURL = true
+						continue
+					}
 					return "", nil, nil, fmt.Errorf("source-publication blocker: %s detected in %s (value withheld)", rule.name, file)
 				}
 			}
@@ -122,6 +159,9 @@ func inspectSnapshot(ctx context.Context, root string, source Upstream) (string,
 				return "", nil, nil, err
 			}
 			for _, finding := range findings {
+				if finding == "credential-bearing URL" && localTutorialURL {
+					finding = "local tutorial credential URL; verify these example credentials are not used for a real service"
+				}
 				warnings = append(warnings, fmt.Sprintf("Review upstream file %s: %s (value withheld).", file, finding))
 			}
 		}

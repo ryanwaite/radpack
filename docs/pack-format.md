@@ -489,6 +489,12 @@ withheld. Binary contents are checked for known signatures, not fully interprete
 All original license and notice files remain in the unchanged tree; Radpack
 does not certify redistribution rights.
 
+For initial snapshot publication only, text URLs with the literal tutorial pair
+`username:password` and an exact loopback host (`localhost`, `127.0.0.1`, `::1`)
+produce a review warning instead of a credential-URL blocker. Every matching
+URL must qualify; other token/key signatures still block independently.
+Portable pack inspection is unchanged.
+
 Independent creation uses `POST user/repos`. Only a successful response with a
 repository ID binds a newly created destination. An ambiguous response without
 that identity cannot be recovered merely by finding a matching name: manual

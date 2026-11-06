@@ -236,6 +236,12 @@ inspected. These checks are best-effort, not proof that redistribution is safe
 or licensed. If inspection blocks a repository, prepare it manually rather
 than bypassing the review.
 
+Credential-bearing URLs normally block publication. The literal tutorial pair
+`username:password` on exactly `localhost`, `127.0.0.1`, or `::1` is instead a
+review warning in text files. Other credentials or hosts still block, including
+when they appear alongside an allowed example. This exception applies only to
+initial source snapshots; portable pack credential checks remain unchanged.
+
 ```bash
 # Default private destination: your-account/application-radpack
 radpack create owner/application

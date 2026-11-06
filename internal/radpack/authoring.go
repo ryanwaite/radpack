@@ -367,7 +367,13 @@ func authoringWorkflowWithAPI(ctx context.Context, target string, values map[str
 			if report.RepositorySetup.ReviewSHA256 != "" {
 				fmt.Fprintf(out, "Repository setup review SHA: %s\n", report.RepositorySetup.ReviewSHA256)
 			}
-			if report.RepositorySetup.Message != "" {
+			messageInDiagnostics := false
+			for _, diagnostic := range report.Diagnostics {
+				if diagnostic.Message == report.RepositorySetup.Message {
+					messageInDiagnostics = true
+				}
+			}
+			if report.RepositorySetup.Message != "" && !messageInDiagnostics && resultErr == nil {
 				fmt.Fprintln(out, report.RepositorySetup.Message)
 			}
 		}
@@ -378,7 +384,14 @@ func authoringWorkflowWithAPI(ctx context.Context, target string, values map[str
 			}
 		}
 		for _, diagnostic := range report.Diagnostics {
-			fmt.Fprintf(out, "%s %s\n", diagnostic.Message, diagnostic.NextAction)
+			// Run prints the returned error once on stderr. Keep recovery
+			// guidance here and preserve complete diagnostics in JSON.
+			if resultErr == nil || diagnostic.Message != resultErr.Error() {
+				fmt.Fprintln(out, diagnostic.Message)
+			}
+			if diagnostic.NextAction != "" {
+				fmt.Fprintln(out, diagnostic.NextAction)
+			}
 		}
 		if len(report.ResumeArgs) > 0 {
 			fmt.Fprintf(out, "Resume with: radpack create --resume %q", report.Source)

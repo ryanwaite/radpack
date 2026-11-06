@@ -96,7 +96,9 @@ Partial application stays claimed and visible; do not remove an app-managed
 worktree to recover. Coordinate protocol changes with the Radius extension.
 
 Create verifies source revisions in a scratch Git database, not the author's
-checkout. Keep prompts terminal-only and confirmation default-no. Tests should
+checkout. Keep prompts terminal-only. Pack saving and standalone fork setup are
+default-no; URL-create fork setup is default-yes only after displaying its review.
+EOF, cancellation, and nonterminal input must never imply approval. Tests should
 cover redirected streams, EOF/cancellation, local-only commits, fork ambiguity,
 and file changes during review. Never assume that `main` is the default branch
 or that all differences from upstream belong in a pack.
@@ -105,11 +107,14 @@ URL-first authoring keeps its record in Git-local metadata. Exercise restart
 from another current directory, EOF/cancellation, saved-output verification,
 baseline preservation, and worktree selection. Never infer that a graph file
 means deployment verification, and never publish as a side effect of save.
-Use mock GitHub APIs for the default deployment stage: prove fork-first creation
-does not query upstream administration, while `--use-source` requires it and
-never falls back to a fork. Cover retained legacy choices, unavailable/SAML
-access, separate fork approval, named/reused forks, remembered local-only choice,
-and pending-operation retries. `--status` must remain
+Use mock GitHub APIs and local bare destinations for the default independent
+repository stage. Prove it never queries upstream administrator or fork APIs.
+Source publication is default-no, private unless explicitly public, and separate
+from pack-save approval. Cover Actions disabled before push, exact root snapshots,
+license preservation, omitted history/local changes, normal subsequent authoring
+pushes, empty-destination conflicts, signing failures, and uncertain API/push
+responses. Preserve fork/source/local-only mode coverage and legacy choices.
+`--status` must remain
 read-only, and neither `--fork` nor pack-save approval may create a fork without
 fork consent. Local-only authoring fixtures should explicitly use `--no-fork`
 so they cannot depend on a contributor's live GitHub account.

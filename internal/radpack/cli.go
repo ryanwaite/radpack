@@ -11,7 +11,9 @@ import (
 const help = `Radpack - set up cloud-native apps, explore their architecture, and deploy to your cloud of choice with Radius
 
   radpack create <github-url|owner/repo> [--directory <new-checkout>] [--output <pack-directory>] [--json]
-                 [--fork | --no-fork | --use-source] [--fork-name <name>]
+                 [--independent | --fork | --no-fork | --use-source]
+                 [--repository <owner/repo>] [--public | --private] [--fork-name <name>]
+  radpack create --resume <checkout> --repository-approve <publication-review-sha> [--json]
   radpack create --resume <checkout> --fork-approve <fork-review-sha> [--json]
   radpack create --resume <authoring-checkout> [--source <linked-worktree>] [--status] [--json]
   radpack create [--base <full-sha>] [--source <repo>] [--output <pack-directory>]
@@ -32,9 +34,12 @@ const help = `Radpack - set up cloud-native apps, explore their architecture, an
   radpack verify [<pack-directory>] --directory <installed-directory>
 
 Create infers a published source revision and asks before saving in a terminal.
-Create with a GitHub URL is fork-first: clone, review a personal fork, then Radify.
-Forks require consent. --no-fork remembers local work; --use-source checks source
-administration instead. No upstream administrator check runs in fork-first mode.
+Create with a URL reviews a private independent authoring repository by default.
+Explicit approval publishes a pinned source snapshot with Actions disabled.
+--public explicitly selects public visibility; --repository selects a destination.
+--fork retains optional GitHub fork setup; --no-fork remembers local-only work.
+--use-source checks source administration instead. No upstream admin API is
+required for independent repositories. No upstream history or local changes are published.
 Resume later with --resume; --status inspects authoring progress without saving.
 Noninteractive create only previews unless --approve matches the review SHA.
 Output defaults to ./contrib/<pack-name>. Existing destinations are never reused.
@@ -55,7 +60,7 @@ directly without launching the app. Plugin setup and sign-in remain user actions
 // CLI without adding a runtime or external command framework dependency.
 func parseOptions(command string, args []string) (map[string][]string, []string, error) {
 	schemas := map[string]map[string]bool{
-		"create":  {"source": false, "base": false, "output": false, "upstream": false, "name": false, "include": false, "recipe": false, "recipe-pack": false, "radius-version": false, "dry-run": true, "approve": false, "json": true, "directory": false, "resume": false, "status": true, "fork": true, "no-fork": true, "use-source": true, "fork-name": false, "fork-approve": false},
+		"create":  {"source": false, "base": false, "output": false, "upstream": false, "name": false, "include": false, "recipe": false, "recipe-pack": false, "radius-version": false, "dry-run": true, "approve": false, "json": true, "directory": false, "resume": false, "status": true, "fork": true, "no-fork": true, "use-source": true, "fork-name": false, "fork-approve": false, "independent": true, "repository": false, "public": true, "private": true, "repository-approve": false},
 		"inspect": {},
 		"report":  {"directory": false},
 		"fork":    {"directory": false, "name": false, "dry-run": true, "approve": false, "json": true},
@@ -175,7 +180,7 @@ func runWithUI(ctx context.Context, args []string, out io.Writer, probe radiusVe
 		if get("status") != "" {
 			return fmt.Errorf("--status requires --resume")
 		}
-		for _, key := range []string{"fork", "no-fork", "fork-name", "fork-approve", "use-source"} {
+		for _, key := range []string{"fork", "no-fork", "fork-name", "fork-approve", "use-source", "independent", "repository", "public", "private", "repository-approve"} {
 			if _, ok := values[key]; ok {
 				return fmt.Errorf("--%s requires a URL-started or resumed authoring workflow; use radpack fork for an independent checkout", key)
 			}

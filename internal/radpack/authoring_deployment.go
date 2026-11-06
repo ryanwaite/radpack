@@ -15,19 +15,42 @@ type authoringDeploymentChoice struct {
 	FormatVersion int    `json:"formatVersion"`
 	Mode          string `json:"mode"`
 	Name          string `json:"name"`
+	Repository    string `json:"repository,omitempty"`
+	Public        bool   `json:"public,omitempty"`
 }
 
 type authoringDeployment struct {
-	Status       string      `json:"status"`
-	Repository   string      `json:"repository,omitempty"`
-	ReviewSHA256 string      `json:"reviewSha256,omitempty"`
-	Review       *ForkReview `json:"review,omitempty"`
-	Message      string      `json:"message,omitempty"`
-	NextAction   string      `json:"nextAction,omitempty"`
+	Status            string            `json:"status"`
+	Repository        string            `json:"repository,omitempty"`
+	ReviewSHA256      string            `json:"reviewSha256,omitempty"`
+	Review            *ForkReview       `json:"review,omitempty"`
+	Message           string            `json:"message,omitempty"`
+	NextAction        string            `json:"nextAction,omitempty"`
+	PublicationReview *RepositoryReview `json:"publicationReview,omitempty"`
+	SourcePublication string            `json:"sourcePublication,omitempty"`
 }
 
 func validateCreateForkOptions(values map[string][]string, starting bool) error {
 	has := func(key string) bool { _, ok := values[key]; return ok }
+	independent := has("independent") || has("repository") || has("public") || has("private") || has("repository-approve")
+	if has("public") && has("private") {
+		return fmt.Errorf("use --public or --private, not both")
+	}
+	if independent && (has("fork") || has("fork-name") || has("fork-approve") || has("no-fork") || has("use-source")) {
+		return fmt.Errorf("independent repository options cannot be combined with fork, source-only, or local-only options")
+	}
+	if has("repository") {
+		if _, err := repositoryURL(option(values, "repository")); err != nil {
+			return err
+		}
+	}
+	if has("status") && independent {
+		return fmt.Errorf("--status is read-only; select repository options on normal resume")
+	}
+	if has("repository-approve") && (starting || !hashPattern.MatchString(option(values, "repository-approve")) ||
+		has("approve") || has("dry-run") || has("status")) {
+		return fmt.Errorf("--repository-approve requires an exact source-publication review SHA on resume, separate from pack approval, dry-run, and status")
+	}
 	if has("fork") && has("no-fork") {
 		return fmt.Errorf("use --fork or --no-fork, not both")
 	}
@@ -63,15 +86,21 @@ func readAuthoringChoice(state *authoringState) (authoringDeploymentChoice, erro
 		return authoringDeploymentChoice{}, err
 	}
 	if file == nil {
-		return authoringDeploymentChoice{1, "fork", ""}, nil
+		return authoringDeploymentChoice{FormatVersion: 1, Mode: "independent"}, nil
 	}
 	var choice authoringDeploymentChoice
 	if err := decodeStrict(file.Bytes, &choice); err != nil {
 		return choice, err
 	}
-	if choice.FormatVersion != 1 || (choice.Mode != "auto" && choice.Mode != "fork" && choice.Mode != "skip" && choice.Mode != "source") ||
+	if choice.FormatVersion != 1 || (choice.Mode != "auto" && choice.Mode != "fork" && choice.Mode != "skip" && choice.Mode != "source" && choice.Mode != "independent") ||
 		(choice.Name != "" && (!match(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`, choice.Name) || strings.HasSuffix(choice.Name, ".git"))) {
 		return choice, fmt.Errorf("invalid authoring deployment choice")
+	}
+	if choice.Repository != "" {
+		repository, err := repositoryURL(choice.Repository)
+		if err != nil || repository != choice.Repository {
+			return choice, fmt.Errorf("invalid authoring repository choice")
+		}
 	}
 	return choice, nil
 }
@@ -148,10 +177,21 @@ func prepareAuthoringDeployment(ctx context.Context, state *authoringState, valu
 					return waiting, err
 				}
 				waiting.Status = "ready"
+				if binding.Kind == "independent" {
+					waiting.SourcePublication = "confirmed"
+				}
 				return waiting, nil
 			}
 			waiting.Status = "awaiting-fork-approval"
 			waiting.NextAction = "Resume with --fork-approve and the recorded fork approval to reconcile pending setup."
+			if binding.Kind == "independent" {
+				waiting.Status = "awaiting-repository-approval"
+				waiting.PublicationReview = binding.PublicationReview
+				waiting.NextAction = "Resume with --repository-approve and the recorded source-publication review SHA to reconcile setup."
+				if binding.PushAttempted {
+					waiting.SourcePublication = "unconfirmed"
+				}
+			}
 			return waiting, nil
 		}
 		if choice.Mode == "skip" {
@@ -160,6 +200,22 @@ func prepareAuthoringDeployment(ctx context.Context, state *authoringState, valu
 		return waiting, nil
 	}
 	next := choice
+	if option(values, "independent") != "" || option(values, "repository") != "" || option(values, "public") != "" || option(values, "private") != "" || option(values, "repository-approve") != "" {
+		next.Mode = "independent"
+		next.Name = ""
+	}
+	if option(values, "repository") != "" {
+		next.Repository, err = repositoryURL(option(values, "repository"))
+		if err != nil {
+			return waiting, err
+		}
+	}
+	if option(values, "public") != "" {
+		next.Public = true
+	}
+	if option(values, "private") != "" {
+		next.Public = false
+	}
 	if option(values, "fork") != "" || option(values, "fork-name") != "" || option(values, "fork-approve") != "" {
 		next.Mode = "fork"
 	}
@@ -180,7 +236,17 @@ func prepareAuthoringDeployment(ctx context.Context, state *authoringState, valu
 		return waiting, fmt.Errorf("fork setup is already recorded; --use-source cannot undo or abandon a possibly created fork. Resume radpack fork to inspect it")
 	}
 	if binding != nil {
-		next.Mode = "fork"
+		if binding.Kind == "independent" {
+			if option(values, "fork") != "" || option(values, "fork-name") != "" || option(values, "fork-approve") != "" {
+				return waiting, fmt.Errorf("independent repository setup is recorded; resume it instead of forking")
+			}
+			next.Mode = "independent"
+		} else {
+			if next.Mode == "independent" {
+				return waiting, fmt.Errorf("fork setup is already recorded; independent setup cannot replace it")
+			}
+			next.Mode = "fork"
+		}
 	}
 	if !reflect.DeepEqual(next, choice) {
 		if err := saveAuthoringChoice(state, next); err != nil {
@@ -190,6 +256,9 @@ func prepareAuthoringDeployment(ctx context.Context, state *authoringState, valu
 	}
 	if choice.Mode == "skip" {
 		return authoringDeployment{Status: "skipped"}, nil
+	}
+	if choice.Mode == "independent" {
+		return prepareIndependentRepository(ctx, state, choice, binding, values, ui, api)
 	}
 
 	// Keep the previous automatic policy for workflows that already recorded it.
@@ -267,7 +336,19 @@ func prepareAuthoringDeployment(ctx context.Context, state *authoringState, valu
 		} else {
 			fmt.Fprintf(ui.out, "Pending personal fork: %s\nThe original operation may have created it; resume only after reviewing that destination.\n", result.Repository)
 		}
-		yes, err := ui.confirm(ctx, "Create or reuse this personal fork for deployment?")
+		action := "Resume setup of"
+		if result.Review != nil {
+			switch result.Review.Action {
+			case "create-personal-fork":
+				action = "Create"
+			case "reuse-personal-fork":
+				action = "Reuse"
+			default:
+				return waiting, fmt.Errorf("cannot confirm unknown fork action %q", result.Review.Action)
+			}
+		}
+		question := fmt.Sprintf("%s public fork %s and use it as origin?", action, repoSlug(result.Repository))
+		yes, err := ui.confirmWithDefault(ctx, question, true)
 		if errors.Is(err, errCreateCancelled) {
 			return waiting, nil
 		}

@@ -371,14 +371,25 @@ or credential data. The recorded baseline stays fixed after upstream or local
 branches advance.
 
 `radpack-authoring/deployment-choice.json` separately records `formatVersion: 1`,
-`mode` (`fork`, `source`, `skip`, or legacy `auto`), and an optional fork `name`
-(empty when unspecified). New URL workflows default to `fork`; records without
-this file also use fork-first setup. Existing records retain their choice,
+`mode` (`independent`, `fork`, `source`, `skip`, or legacy `auto`), an optional fork
+`name` (empty when unspecified), and optional independent `repository` and
+`public` fields. Omitted/false `public` means private. New URL workflows default
+to `independent`; records without this file also use independent setup.
+Existing records retain their choice,
 including the legacy administrator-first `auto` policy. A terminal decline or
 `--no-fork` persists `skip`. EOF preserves the pending choice. This record is
 local Git metadata and never part of a portable pack.
 
-Before Radification, `fork` reviews the personal fork without checking upstream
+Before Radification, `independent` reviews a private source-snapshot repository
+without using upstream administrator or fork APIs. `--public` explicitly selects
+public visibility; `--private` restores private selection before an operation
+is recorded. Neither flag changes a live repository's visibility.
+A default-name collision requires explicit `--repository`;
+only an empty, independently owned and administered personal repository with
+matching visibility can be reused. Approval is `--repository-approve <sha>` or
+explicit terminal yes after a default-no source-publication review.
+
+`fork` reviews the personal fork without checking upstream
 administrator permission. `--use-source` records `source`, which requires an
 active source administrable by the selected account. Missing or unknown access
 returns `awaiting-github-access`, without falling back to a fork. Legacy `auto`
@@ -389,7 +400,15 @@ or `--resume --fork-approve <sha>` delegates to the existing fork operation,
 including its review hash, journal, and identity checks. `--approve` remains
 pack-save approval only. Pending/completed deployment bindings take precedence
 over a remembered skip; explicit `--no-fork` or `--use-source` cannot abandon
-such a binding. `--fork` explicitly switches an older workflow to fork-first.
+such a binding. `--independent` switches a workflow with no binding to snapshot
+publication; pending or ready fork bindings cannot silently be converted.
+`--fork` explicitly selects the optional fork path.
+
+The interactive create fork prompt names the action and repository and defaults
+to yes (`[Y/n]`): Enter approves the displayed review. Explicit `n`/`no` skips
+when no operation is pending. EOF and cancellation do not approve. JSON and
+redirected invocations still require `--fork-approve`; pack-save and standalone
+fork confirmations retain their default-no behavior.
 
 `create --resume <checkout>` validates that record and the clone identity. A
 linked worktree can be selected with `--source`, or by giving its path directly
@@ -404,7 +423,8 @@ and approval path. No scripts, agent prompts, environment creation, or publishin
 are triggered by that pause or continuation.
 
 URL-started JSON/redirected invocations return immediately with
-`awaiting-fork-approval`, `awaiting-github-access`, or `awaiting-radification`.
+`awaiting-repository-approval`, `awaiting-fork-approval`, `awaiting-github-access`,
+or `awaiting-radification`.
 Resume can also return `awaiting-deployment-choice`, `awaiting-radification`,
 `awaiting-worktree-selection`, or the existing create review report. Read-only
 `--resume ... --status` never probes GitHub or changes the deployment choice.
@@ -418,10 +438,17 @@ Authoring reports have `reportVersion: 1`, `command: "create"`, `status`, `stage
 `source`, `application` (original repository/commit), `output`, optional selected
 `worktree`, available `worktrees`, `resumeArgs`, and structured diagnostics.
 Optional `repositorySetup` contains setup `status`, `repository`, `reviewSha256`,
-the complete fork `review`, `message`, and `nextAction` when applicable. Its
+the complete fork `review` or independent `publicationReview`, `message`, and
+`nextAction` when applicable. Independent reviews bind source tree/file hashes,
+destination visibility and ID (if existing), selected account, local HEAD/branch,
+original remotes, affected worktrees, and publication warnings. Its
 `ready` status identifies the chosen repository, not full deployment readiness.
 `publication` and `deploymentVerification` are `not-performed`; `credentials`
-is `not-inspected`. Terminal responses do not need to be parsed by an agent.
+is `not-inspected`. `publication` describes pack publication.
+`repositorySetup.sourcePublication` separately reports initial snapshot
+publication as `not-performed`, `unconfirmed` (a push was attempted but setup
+has not completed), or `confirmed`. Terminal responses do not need to be
+parsed by an agent.
 
 Review/save is serialized with a Git-local `review.lock`. A process interruption
 may leave that file behind; inspect the process and output before manually
@@ -436,7 +463,7 @@ workflow automatically when its original clone is relocated or deleted.
 
 ## Local deployment repository binding
 
-A personal deployment fork is not a new application source. `radpack fork`
+A deployment repository is not a new application source. Repository setup
 records its choice in `radpack-deployment.json` inside the clone's Git common
 directory, shared by linked worktrees. It never writes the binding into an
 application file, portable manifest, or installed receipt.
@@ -446,6 +473,48 @@ application repository/commit, personal deployment repository, GitHub account
 login/ID, verified destination repository ID, reviewed remote URLs, approval
 hash, operation status (`pending` or `ready`), and whether fork creation has
 already been requested. It stores no credential or environment values.
+
+Independent bindings add `kind: "independent"`, `private`, `snapshotTree`,
+`snapshotCommit`, `pushAttempted`, and the hash-bound `publicationReview`.
+Legacy bindings without `kind` retain fork semantics. The root snapshot uses
+the pinned source tree unchanged and a commit message identifying its upstream
+repository/commit; configured Git signing is honored, without unsigned fallback.
+It is retained at `refs/radpack/publication/<review-sha>` for recovery. No local
+worktree changes, upstream history, unrelated refs, or tags are published.
+
+Source inspection blocks high-confidence credential signatures, symlinks,
+submodules, LFS pointers, unsupported paths, files over 8 MiB, and snapshots over
+32 MiB. Other source-content findings are explicit review warnings, with values
+withheld. Binary contents are checked for known signatures, not fully interpreted.
+All original license and notice files remain in the unchanged tree; Radpack
+does not certify redistribution rights.
+
+For initial snapshot publication only, text URLs with the literal tutorial pair
+`username:password` and an exact loopback host (`localhost`, `127.0.0.1`, `::1`)
+produce a review warning instead of a credential-URL blocker. Every matching
+URL must qualify; other token/key signatures still block independently.
+Portable pack inspection is unchanged.
+
+Independent creation uses `POST user/repos`. Only a successful response with a
+repository ID binds a newly created destination. An ambiguous response without
+that identity cannot be recovered merely by finding a matching name: manual
+inspection is required and no second creation request is sent. Confirmed IDs
+and visibility are checked before publication. An explicitly selected existing
+repository must be empty. Actions are disabled by an approved PUT and verified
+disabled before pushing, then checked again before completing setup.
+
+The only push is the new root commit to `refs/heads/radpack-authoring`, with an
+explicit empty-ref lease and automatic tag/submodule pushes disabled. A conflicting
+destination is refused, never overwritten. Retry recognizes only the recorded
+commit and expected ref after a recorded push attempt. The local checkout
+switches to a new branch tracking that remote branch; the previous local branch
+and uncommitted files remain. The committed tree must match the original
+baseline before starting setup, and an existing local authoring branch is not
+overwritten. Normal future authoring commits can then be pushed without changing
+the independent history. Ready resumes recheck identity/remotes but do not
+disable Actions again, publish source again, or switch branches.
+
+The following creation behavior applies to the optional fork path:
 
 Setup writes the pending record before GitHub mutation. Ambiguous creation
 results are reconciled by reading the expected personal repository rather than
@@ -466,7 +535,7 @@ Verification permits a different origin only with a valid ready binding and
 the exact recorded source/deployment remotes. Packs and receipts still carry
 the original application identity. Changing origin manually does not disable
 this invariant. Pending bindings refuse normal packaging/verification until the
-fork operation is resolved.
+repository operation is resolved.
 
 The handoff status may include an optional `deploymentRepository` URL alongside
 the original `repository`. A changed deployment binding changes a pending review
@@ -474,9 +543,11 @@ hash. Radius should use its refreshed workspace repository selection for
 environment setup, not reinterpret the pack's original application identity.
 Existing protocol consumers may ignore this added display field.
 
-Fork setup changes repository routing, not cloud setup. A user must explicitly
-reopen the same Radius canvas instance with an explicit fork repository and
+Repository setup does not configure clouds. A user must explicitly
+reopen the same Radius canvas instance with the explicit deployment repository and
 environment page, then obtain new readiness/selection evidence before
 creating environments. OIDC identity, workflows, and state packages belong to
-that selected deployment repository. The command does not push prepared source,
-create or modify environments, or change Actions policy.
+that selected deployment repository. Optional fork setup does not push prepared
+source or change Actions policy. Independent setup publishes the approved
+snapshot and leaves Actions disabled; enabling Actions and cloud setup remain
+separate user decisions. Neither path creates or modifies environments.

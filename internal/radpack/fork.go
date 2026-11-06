@@ -483,6 +483,9 @@ func forkCommand(ctx context.Context, values map[string][]string, out io.Writer,
 	if err != nil {
 		return err
 	}
+	if binding != nil && binding.Kind == "independent" {
+		return fmt.Errorf("independent repository setup is recorded; resume radpack create instead of radpack fork")
+	}
 	var review *ForkReview
 	approval := get("approve")
 	if binding == nil {

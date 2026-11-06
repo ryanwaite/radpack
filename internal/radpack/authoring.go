@@ -179,7 +179,16 @@ func startAuthoring(ctx context.Context, target string, values map[string][]stri
 		if err := savePrivateJSON(local, "request.json", record); err != nil {
 			return err
 		}
-		choice := authoringDeploymentChoice{FormatVersion: 1, Mode: "fork", Name: option(values, "fork-name")}
+		choice := authoringDeploymentChoice{FormatVersion: 1, Mode: "independent", Name: option(values, "fork-name"), Public: option(values, "public") != ""}
+		if option(values, "repository") != "" {
+			choice.Repository, err = repositoryURL(option(values, "repository"))
+			if err != nil {
+				return err
+			}
+		}
+		if option(values, "fork") != "" || choice.Name != "" {
+			choice.Mode = "fork"
+		}
 		if option(values, "use-source") != "" {
 			choice.Mode = "source"
 		}
@@ -327,7 +336,7 @@ func authoringWorkflow(ctx context.Context, target string, values map[string][]s
 func authoringWorkflowWithAPI(ctx context.Context, target string, values map[string][]string, out io.Writer, ui *createUI, allowPause bool, api githubAPI) (resultErr error) {
 	get := func(key string) string { return option(values, key) }
 	machine := get("json") != ""
-	automatic := machine || get("dry-run") != "" || get("approve") != "" || get("status") != "" || get("fork-approve") != ""
+	automatic := machine || get("dry-run") != "" || get("approve") != "" || get("status") != "" || get("fork-approve") != "" || get("repository-approve") != ""
 	if automatic {
 		ui = nil
 	}
@@ -356,7 +365,10 @@ func authoringWorkflowWithAPI(ctx context.Context, target string, values map[str
 				fmt.Fprintf(out, "Deployment repository: %s\n", report.RepositorySetup.Repository)
 			}
 			if report.RepositorySetup.ReviewSHA256 != "" {
-				fmt.Fprintf(out, "Fork review SHA: %s\n", report.RepositorySetup.ReviewSHA256)
+				fmt.Fprintf(out, "Repository setup review SHA: %s\n", report.RepositorySetup.ReviewSHA256)
+			}
+			if report.RepositorySetup.Message != "" {
+				fmt.Fprintln(out, report.RepositorySetup.Message)
 			}
 		}
 		if len(report.Worktrees) > 1 {
@@ -438,7 +450,7 @@ func authoringWorkflowWithAPI(ctx context.Context, target string, values map[str
 		report.PackSHA256 = pack.Digest
 		report.ResumeArgs = nil
 		report.Diagnostics = append(report.Diagnostics, ReadinessIssue{Code: "pack-already-saved", Phase: "save",
-			Message:    "The local pack is saved. No publication or deployment has been performed.",
+			Message:    "The local pack is saved. No pack publication or cloud deployment has been performed.",
 			NextAction: "Use radpack inspect/report or install --no-open to review the saved pack. Publication is a separate action."})
 		return nil
 	}
@@ -468,7 +480,7 @@ func authoringWorkflowWithAPI(ctx context.Context, target string, values map[str
 		return nil
 	}
 	if setup.Status == "skipped" && !machine {
-		fmt.Fprintln(out, "Continuing locally without fork setup. GitHub-based Radius deployment still needs a repository you administer.")
+		fmt.Fprintln(out, "Continuing locally without repository setup. GitHub-based Radius deployment still needs a repository you administer.")
 	}
 	roots, err := authoringWorktrees(ctx, state)
 	if err != nil {
@@ -536,7 +548,7 @@ func authoringWorkflowWithAPI(ctx context.Context, target string, values map[str
 	}
 	// Always pause a newly cloned application, even if it already has a model.
 	// Completion is an author decision, not inferred from a filename.
-	if target != "" || !present {
+	if target != "" || !present || get("repository-approve") != "" {
 		report.Status = "awaiting-radification"
 		report.Stage = "model"
 		report.Diagnostics = append(report.Diagnostics, ReadinessIssue{Code: "radification-required", Phase: "model",
@@ -565,7 +577,7 @@ func authoringWorkflowWithAPI(ctx context.Context, target string, values map[str
 		// selected rather than exporting the original unmodified clone.
 		resumed := cloneOptions(values)
 		delete(resumed, "directory")
-		for _, key := range []string{"fork", "no-fork", "fork-name", "fork-approve", "use-source"} {
+		for _, key := range []string{"fork", "no-fork", "fork-name", "fork-approve", "use-source", "independent", "repository", "public", "private", "repository-approve"} {
 			delete(resumed, key)
 		}
 		resumed["resume"] = []string{state.record.SourceDirectory}
@@ -578,7 +590,7 @@ func authoringWorkflowWithAPI(ctx context.Context, target string, values map[str
 		return nil
 	}
 	resolved := cloneOptions(values)
-	for _, key := range []string{"resume", "directory", "status", "fork", "no-fork", "fork-name", "fork-approve", "use-source"} {
+	for _, key := range []string{"resume", "directory", "status", "fork", "no-fork", "fork-name", "fork-approve", "use-source", "independent", "repository", "public", "private", "repository-approve"} {
 		delete(resolved, key)
 	}
 	resolved["source"] = []string{selected}

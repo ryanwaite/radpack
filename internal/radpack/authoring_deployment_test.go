@@ -79,12 +79,12 @@ func TestCreateUseSourceSkipsForkForAdministrator(t *testing.T) {
 	}
 }
 
-func TestCreateDefaultOffersForkAndResumesWithSeparateApproval(t *testing.T) {
+func TestCreateExplicitForkAndResumesWithSeparateApproval(t *testing.T) {
 	f := newAuthoringFixture(t)
 	mapForkGit(t, f)
 	fake := forkAPI(t)
 	api := sourceAccessAPI(fake, false, 200)
-	first, err := startDeploymentReview(t, f, nil, api)
+	first, err := startDeploymentReview(t, f, map[string][]string{"fork": {"true"}}, api)
 	check(t, err)
 	if first.Status != "awaiting-fork-approval" || first.RepositorySetup.Review.Action != "create-personal-fork" ||
 		first.RepositorySetup.Review.Application.Repository != repo {
@@ -132,13 +132,13 @@ func TestCreateDefaultOffersForkAndResumesWithSeparateApproval(t *testing.T) {
 	}
 }
 
-func TestCreateDefaultNeverProbesSourceAdministration(t *testing.T) {
+func TestCreateForkNeverProbesSourceAdministration(t *testing.T) {
 	for _, admin := range []bool{false, true} {
 		t.Run(fmt.Sprint(admin), func(t *testing.T) {
 			f := newAuthoringFixture(t)
 			fake := forkAPI(t)
 			api := sourceAccessAPI(fake, admin, 403)
-			report, err := startDeploymentReview(t, f, nil, api)
+			report, err := startDeploymentReview(t, f, map[string][]string{"fork": {"true"}}, api)
 			check(t, err)
 			if report.Status != "awaiting-fork-approval" || fake.postCount != 0 {
 				t.Fatal(report)
@@ -161,11 +161,11 @@ func TestCreateDefaultNeverProbesSourceAdministration(t *testing.T) {
 	}
 }
 
-func TestCreateDefaultForkRefusalPreservesCheckout(t *testing.T) {
+func TestCreateExplicitForkRefusalPreservesCheckout(t *testing.T) {
 	f := newAuthoringFixture(t)
 	fake := forkAPI(t)
 	fake.postStatus = 403
-	report, err := startDeploymentReview(t, f, nil, fake.call)
+	report, err := startDeploymentReview(t, f, map[string][]string{"fork": {"true"}}, fake.call)
 	check(t, err)
 	_, err = resumeDeploymentReview(t, f, map[string][]string{"fork-approve": {report.RepositorySetup.ReviewSHA256}}, fake.call)
 	fails(t, err, "GitHub refused access")
@@ -201,7 +201,7 @@ func TestCreateRetainsLegacyAutoUntilExplicitForkChoice(t *testing.T) {
 	prepareURL(t, f)
 	state, err := loadAuthoring(ctx, f.destination)
 	check(t, err)
-	check(t, saveAuthoringChoice(state, authoringDeploymentChoice{1, "auto", ""}))
+	check(t, saveAuthoringChoice(state, authoringDeploymentChoice{FormatVersion: 1, Mode: "auto"}))
 	fake := forkAPI(t)
 	api := sourceAccessAPI(fake, false, 403)
 	report, err := resumeDeploymentReview(t, f, nil, api)
@@ -257,23 +257,30 @@ func TestCreateUseSourceRejectsUnrecordedOriginChange(t *testing.T) {
 }
 
 func TestCreateTerminalForkApprovalAndDecline(t *testing.T) {
-	for _, approve := range []bool{false, true} {
-		t.Run(map[bool]string{false: "decline-local", true: "approve"}[approve], func(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		answer  string
+		approve bool
+	}{
+		{"decline-local", "n\nq\n", false},
+		{"approve", "y\nq\n", true},
+		{"enter-approves", "\nq\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			f := newAuthoringFixture(t)
 			mapForkGit(t, f)
 			fake := forkAPI(t)
 			api := sourceAccessAPI(fake, false, 200)
-			answer := "\nq\n"
-			if approve {
-				answer = "y\nq\n"
-			}
 			var out strings.Builder
-			ui := &createUI{bufio.NewReader(strings.NewReader(answer)), &out}
-			check(t, authoringWorkflowWithAPI(ctx, repo, map[string][]string{"directory": {f.destination}, "output": {f.pack}}, &out, ui, true, api))
+			ui := &createUI{bufio.NewReader(strings.NewReader(tc.answer)), &out}
+			check(t, authoringWorkflowWithAPI(ctx, repo, map[string][]string{"directory": {f.destination}, "output": {f.pack}, "fork": {"true"}}, &out, ui, true, api))
 			if !strings.Contains(out.String(), "Visibility: public") || !strings.Contains(out.String(), "Go Radify your app") {
 				t.Fatal(out.String())
 			}
-			if (fake.postCount == 1) != approve {
+			if !strings.Contains(out.String(), "Create public fork personal-user/app and use it as origin? [Y/n]") {
+				t.Fatal(out.String())
+			}
+			if (fake.postCount == 1) != tc.approve {
 				t.Fatal(fake.postCount)
 			}
 			before := len(fake.calls)
@@ -282,7 +289,7 @@ func TestCreateTerminalForkApprovalAndDecline(t *testing.T) {
 			if report.Status != "awaiting-radification" {
 				t.Fatal(report)
 			}
-			if !approve && len(fake.calls) != before {
+			if !tc.approve && len(fake.calls) != before {
 				t.Fatal("remembered skip still accessed GitHub")
 			}
 		})
@@ -293,7 +300,7 @@ func TestCreateForkEOFLeavesDecisionPending(t *testing.T) {
 	f := newAuthoringFixture(t)
 	fake := forkAPI(t)
 	var out strings.Builder
-	check(t, authoringWorkflowWithAPI(ctx, repo, map[string][]string{"directory": {f.destination}}, &out,
+	check(t, authoringWorkflowWithAPI(ctx, repo, map[string][]string{"directory": {f.destination}, "fork": {"true"}}, &out,
 		&createUI{bufio.NewReader(strings.NewReader("")), &out}, true, sourceAccessAPI(fake, false, 200)))
 	if fake.postCount != 0 {
 		t.Fatal("EOF approved fork")
@@ -307,14 +314,43 @@ func TestCreateForkEOFLeavesDecisionPending(t *testing.T) {
 	}
 }
 
+func TestCreateTerminalReusePromptDefaultsYes(t *testing.T) {
+	f := newAuthoringFixture(t)
+	mapForkGit(t, f)
+	fake := forkAPI(t)
+	fake.repository = publicFork(repo, personalForkURL)
+	var out strings.Builder
+	check(t, authoringWorkflowWithAPI(ctx, repo, map[string][]string{"directory": {f.destination}, "fork": {"true"}}, &out,
+		&createUI{bufio.NewReader(strings.NewReader("\nq\n")), &out}, true, fake.call))
+	if !strings.Contains(out.String(), "Reuse public fork personal-user/app and use it as origin? [Y/n]") ||
+		fake.postCount != 0 || g(t, f.destination, "config", "--get", "remote.origin.url") != personalForkURL {
+		t.Fatal(out.String())
+	}
+}
+
+func TestCreateJSONIgnoresInteractiveDefaultYes(t *testing.T) {
+	f := newAuthoringFixture(t)
+	fake := forkAPI(t)
+	var out strings.Builder
+	check(t, authoringWorkflowWithAPI(ctx, repo, map[string][]string{
+		"directory": {f.destination}, "json": {"true"}, "fork": {"true"},
+	}, &out, &createUI{bufio.NewReader(panicReader{}), &out}, true, fake.call))
+	var report AuthoringReport
+	check(t, json.Unmarshal([]byte(out.String()), &report))
+	if report.Status != "awaiting-fork-approval" || fake.postCount != 0 ||
+		g(t, f.destination, "config", "--get", "remote.origin.url") != repo {
+		t.Fatal(out.String())
+	}
+}
+
 func TestCreateExplicitForkDeclineSurvivesRadificationContinuation(t *testing.T) {
 	f := newAuthoringFixture(t)
 	fake := forkAPI(t)
 	var out strings.Builder
 	check(t, authoringWorkflowWithAPI(ctx, repo, map[string][]string{
 		"directory": {f.destination}, "fork": {"true"},
-	}, &out, &createUI{bufio.NewReader(strings.NewReader("\n\n")), &out}, true, fake.call))
-	if strings.Count(out.String(), "Create or reuse this personal fork for deployment?") != 1 || fake.postCount != 0 {
+	}, &out, &createUI{bufio.NewReader(strings.NewReader("n\n\n")), &out}, true, fake.call))
+	if strings.Count(out.String(), "Create public fork personal-user/app and use it as origin? [Y/n]") != 1 || fake.postCount != 0 {
 		t.Fatal(out.String())
 	}
 	state, err := loadAuthoring(ctx, f.destination)
@@ -437,6 +473,8 @@ func TestCreatePendingForkCannotBeSkippedOrDuplicated(t *testing.T) {
 	fails(t, err, "cannot undo or abandon")
 	_, err = resumeDeploymentReview(t, f, map[string][]string{"use-source": {"true"}}, fake.call)
 	fails(t, err, "cannot undo or abandon")
+	_, err = resumeDeploymentReview(t, f, map[string][]string{"independent": {"true"}}, fake.call)
+	fails(t, err, "cannot replace")
 	report, err = resumeDeploymentReview(t, f, map[string][]string{"status": {"true"}}, nil)
 	check(t, err)
 	if report.Status != "awaiting-fork-approval" {
@@ -466,7 +504,7 @@ func TestCreateForkApprovalRejectsDrift(t *testing.T) {
 func TestCreateStatusDoesNotProbeOrChangeChoice(t *testing.T) {
 	f := newAuthoringFixture(t)
 	fake := forkAPI(t)
-	_, err := startDeploymentReview(t, f, nil, sourceAccessAPI(fake, false, 200))
+	_, err := startDeploymentReview(t, f, map[string][]string{"fork": {"true"}}, sourceAccessAPI(fake, false, 200))
 	check(t, err)
 	state, err := loadAuthoring(ctx, f.destination)
 	check(t, err)
@@ -488,8 +526,13 @@ func TestOldAuthoringRecordsReceiveGuidedSetup(t *testing.T) {
 	state, err := loadAuthoring(ctx, f.destination)
 	check(t, err)
 	check(t, os.Remove(filepath.Join(state.directory, "deployment-choice.json")))
+	choice, err := readAuthoringChoice(state)
+	check(t, err)
+	if choice.Mode != "independent" {
+		t.Fatal("missing choice did not receive independent default")
+	}
 	fake := forkAPI(t)
-	report, err := resumeDeploymentReview(t, f, nil, sourceAccessAPI(fake, false, 200))
+	report, err := resumeDeploymentReview(t, f, map[string][]string{"fork": {"true"}}, sourceAccessAPI(fake, false, 200))
 	check(t, err)
 	if report.Status != "awaiting-fork-approval" {
 		t.Fatal(report)

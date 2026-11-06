@@ -323,6 +323,44 @@ func TestTTYAndCancelledPrompt(t *testing.T) {
 	fails(t, err, "could not read")
 }
 
+func TestDefaultYesConfirmation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		input   string
+		approve bool
+		wantErr bool
+	}{
+		{"enter", "\n", true, false},
+		{"yes", "yes\n", true, false},
+		{"no", "no\n", false, false},
+		{"eof", "", false, true},
+		{"partial-yes-eof", "yes", false, true},
+		{"invalid", "maybe\n", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			ui := &createUI{bufio.NewReader(strings.NewReader(tc.input)), &out}
+			yes, err := ui.confirmWithDefault(ctx, "Approve?", true)
+			if yes != tc.approve || (err != nil) != tc.wantErr || out.String() != "Approve? [Y/n] " {
+				t.Fatalf("yes=%v err=%v output=%q", yes, err, out.String())
+			}
+		})
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	ui := &createUI{bufio.NewReader(panicReader{}), io.Discard}
+	yes, err := ui.confirmWithDefault(cancelled, "Approve?", true)
+	if yes || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled confirmation: yes=%v err=%v", yes, err)
+	}
+	ui = &createUI{bufio.NewReader(strings.NewReader("\n")), io.Discard}
+	yes, err = ui.confirm(ctx, "Create this pack?")
+	check(t, err)
+	if yes {
+		t.Fatal("default-no confirmation became default-yes")
+	}
+}
+
 func TestNativePipedYesCannotApprove(t *testing.T) {
 	f := newFixture(t, true)
 	executable := filepath.Join(f.root, "radpack-test-command")

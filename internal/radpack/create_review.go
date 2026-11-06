@@ -62,14 +62,24 @@ func (ui *createUI) line(ctx context.Context, question string) (string, error) {
 }
 
 func (ui *createUI) confirm(ctx context.Context, question string) (bool, error) {
-	answer, err := ui.line(ctx, question+" [y/N] ")
+	return ui.confirmWithDefault(ctx, question, false)
+}
+
+func (ui *createUI) confirmWithDefault(ctx context.Context, question string, defaultYes bool) (bool, error) {
+	suffix := " [y/N] "
+	if defaultYes {
+		suffix = " [Y/n] "
+	}
+	answer, err := ui.line(ctx, question+suffix)
 	if err != nil {
 		return false, err
 	}
 	switch strings.ToLower(answer) {
 	case "y", "yes":
 		return true, nil
-	case "", "n", "no":
+	case "":
+		return defaultYes, nil
+	case "n", "no":
 		return false, nil
 	default:
 		return false, fmt.Errorf("answer yes or no; no pack written")

@@ -29,11 +29,12 @@ radpack create https://github.com/Azure-Samples/aks-store-demo
 ```
 
 Radpack creates `~/Source/aks-store-demo`, clones an exact upstream revision,
-and records it before you make changes. It offers a public personal fork for
-deployment, using your selected GitHub account, without first checking whether
-you administer the upstream repository. It asks before creating or reusing the
-fork. Declining continues with local-only authoring. For a repository you
-administer, use `--use-source` instead.
+and records it before you make changes. It offers a **private independent
+authoring repository**, such as `your-account/aks-store-demo-radpack`, using your
+selected GitHub account. It asks before creating the repository, disabling its
+Actions, and publishing the pinned source snapshot. No upstream contributor
+permission or GitHub fork relationship is required. Declining continues with
+local-only authoring. For a repository you administer, use `--use-source` instead.
 
 Once that choice is settled, Radpack asks you to Radify the application with
 the Radius tools and return to press Enter. You can close the terminal and
@@ -82,7 +83,7 @@ For additional options, see [pack creation](#review-an-existing-prepared-checkou
 ## Install the Radpack CLI
 
 You need Go 1.24 or newer to build Radpack, and Git to use it.
-Personal fork setup also requires GitHub CLI (`gh`) authenticated as the intended
+Independent repository and optional fork setup also require GitHub CLI (`gh`) authenticated as the intended
 personal account.
 
 ```bash
@@ -182,39 +183,79 @@ credentials or Radius environment state.
 
 ### Choose the deployment repository before Radifying
 
-URL-first creation is **fork-first by default**, not automatic repository
-creation. It uses the personal identity selected by `gh` and goes straight to a
-personal-fork review. It does not query the upstream repository's administrator
-permission, so an organization SSO restriction on that check does not block
-the review. GitHub can still refuse the actual fork-creation request; Radpack
-does not bypass authentication or policy.
+URL-first creation defaults to a **private independent authoring repository**,
+not a GitHub fork. Radpack needs read access to the original source and permission
+to create a repository in the personal account selected by `gh`. It never calls
+the upstream administrator or fork API for this path. It cannot bypass source
+access restrictions, your account's repository-creation policies, or license
+requirements.
 
-The terminal shows the fork's owner, name, public visibility,
-whether it will be created or reused, and the shared Git remote changes:
+The review shows the destination and visibility, the pinned original commit,
+every file to be published, source-publication warnings, and affected worktrees:
 
 ```text
-Create or reuse this personal fork for deployment? [y/N]
+Create/use private repository your-account/application-radpack, disable Actions, and publish this source snapshot? [y/N]
 ```
 
-Approval uses the same safety and retry checks as `radpack fork`. An approved
-fork becomes `origin`; the original application stays `upstream` and remains the
-pack's source identity. This changes remotes for linked worktrees too, but does
-not push any local application changes, start a session, enable Actions, or
-create an environment.
+This is a source-publication approval, separate from saving a pack. Answering
+`y` authorizes the following:
 
-Enter or no records a local-only choice and continues to the Radification step.
-EOF pauses with the decision still pending. A pending fork creation cannot be
-discarded with `--no-fork`, because GitHub may already have created it; resume
-the recorded operation instead.
+1. Create a private repository, or use an explicitly selected empty repository
+   that you own and administer. A matching existing name is never implicitly
+   claimed. Nonempty destinations are refused, not overwritten.
+2. Disable GitHub Actions and verify that policy before pushing. Upstream
+   workflow files are preserved, but are not silently activated.
+3. Publish exactly the pinned source tree as one new root commit on
+   `radpack-authoring`. Original files, binary assets, and license/notice files
+   are retained. The commit message records the original repository and commit.
+   No upstream history, tags, other branches, or local uncommitted changes are
+   published.
+4. Set the new repository as `origin`, preserve the original as `upstream`, and
+   switch this checkout to a new `radpack-authoring` branch tracking the published
+   branch. The old local branch and uncommitted files are preserved. Other linked
+   worktrees share the remote changes but are not switched.
+
+Pressing Enter or answering `n` skips when no operation is pending. EOF and
+cancellation leave the choice unresolved. JSON and redirected callers need
+`--repository-approve <review-sha>`. A pending creation/publication cannot be
+discarded with `--no-fork`; inspect and resume the recorded operation.
+
+Actions stay disabled after setup. Reopen the same Radius instance explicitly
+for the new repository and run its readiness checks. Enabling Actions and
+granting cloud access are separate user decisions; Radpack does not do either.
+Once you Radify the application, normal commits and pushes from
+`radpack-authoring` update your independent repository without republishing
+upstream history. The portable pack still compares your work with the original
+upstream revision.
+
+The snapshot inspector blocks known token/private-key signatures, unsupported
+symlinks/submodules, Git LFS pointers, files over 8 MiB, and snapshots over
+32 MiB. Other suspicious source content is listed for review without printing
+values. Binary content is checked for known signatures, not semantically
+inspected. These checks are best-effort, not proof that redistribution is safe
+or licensed. If inspection blocks a repository, prepare it manually rather
+than bypassing the review.
 
 ```bash
+# Default private destination: your-account/application-radpack
+radpack create owner/application
+
+# Choose a new name, or explicitly select an empty repository you own
+radpack create owner/application --repository your-account/my-application
+
+# Explicitly choose public visibility before approving publication
+radpack create owner/application --public
+
+# Restore a private choice before publication (does not change a live repository)
+radpack create --resume ./application-authoring --private
+
 # Choose local authoring without GitHub account or permission checks
 radpack create owner/application --no-fork
 
 # Explicitly request the personal-fork path, still requiring approval
 radpack create owner/application --fork
 
-# Use a repository you administer instead of a personal fork
+# Use the original repository when you administer it
 radpack create owner/application --use-source
 
 # Choose a different personal-fork name; this also requests the fork path
@@ -222,29 +263,36 @@ radpack create owner/application --fork-name application-radius
 ```
 
 `--no-fork` still needs source access to clone, but does not inspect GitHub account
-permissions or create a fork. The choice is remembered on resume. Use `--fork`
-later to opt back into setup. `--fork` does not mean yes; it explicitly selects
-the same personal-fork review that new URL workflows use by default.
+permissions, create a repository, or publish source. The choice is remembered
+on resume. Use `--independent` later to opt into the default repository path.
+
+`--fork` retains the optional GitHub fork flow. Its interactive `[Y/n]` prompt
+names the exact create/reuse action; Enter approves it, but EOF and cancellation
+do not. That path still depends on the upstream fork API, so it can encounter
+organization SSO restrictions. It never pushes local source. Noninteractive
+fork consent remains `--fork-approve`, distinct from `--repository-approve`.
 
 `--use-source` verifies that the selected account can administer the original
 repository and that it is active. It remembers that choice and does not fall
 back to a fork if access is missing. A failed check returns
-`awaiting-github-access`; resolve access, choose `--fork`, or continue with
+`awaiting-github-access`; resolve access, choose `--independent`, or continue with
 `--no-fork`. Source administration does not establish Actions policy, package
 access, or cloud permissions; Radius checks those during deployment setup.
 
 Previously recorded choices remain unchanged. An older workflow that recorded
-the administrator-first `auto` policy keeps it until you explicitly select
-`--fork`, `--use-source`, or `--no-fork`. For a checkout already paused at
-`awaiting-github-access`, switch once without recloning:
+the administrator-first `auto` or fork policy keeps it until you explicitly
+select another mode. For a checkout paused before successful fork setup, switch
+once without recloning:
 
 ```bash
-radpack create --resume ./application-authoring --fork
+radpack create --resume ./application-authoring --independent
 ```
 
-A pre-existing fork must have the expected owner and source relationship; an
-unrelated repository with the same name is never reused. Fork API failures
-preserve the checkout and report the error, rather than claiming setup succeeded.
+An unresolved or completed fork binding cannot be silently replaced by an
+independent publication. Resolve it first. Independent setup also requires the
+checkout's committed tree to match the pinned source and the local
+`radpack-authoring` branch not to exist; committed Radification work must be
+preserved and handled deliberately, not overwritten.
 
 After setup or a local-only choice, an interactive terminal displays:
 
@@ -284,10 +332,10 @@ commit the Radius work locally. To deliberately choose another baseline, use
 ordinary `create --source ... --base ...` outside this recorded workflow.
 Output paths and initial `--include`, `--recipe`, and `--recipe-pack` selections
 survive terminal restarts. Resume can add selections and override `--output`.
-Fork preference and name are saved separately. A completed fork is rechecked
-through the existing fork command on normal resume rather than recreated;
+Repository mode, destination, and visibility are saved separately. A completed
+repository is rechecked on normal resume rather than recreated or republished;
 `--status` only reads local progress and does not make GitHub API calls.
-When no completed fork or skip decision exists, read-only status reports
+When no completed repository or skip decision exists, read-only status reports
 `awaiting-deployment-choice` instead of treating an old permission check as
 current authorization.
 
@@ -303,9 +351,10 @@ output before removing the lock and resuming.
 # Clone and return immediately; never wait for terminal input
 radpack create owner/application --directory ./application-authoring --json
 
-# Approve only the fork described by repositorySetup.review
+# Approve repository creation/use, disabling Actions, and snapshot publication
+# described by repositorySetup.publicationReview
 radpack create --resume ./application-authoring \
-  --fork-approve <fork-review-sha> --json
+  --repository-approve <publication-review-sha> --json
 
 # Resume after the agent or user prepares the model
 radpack create --resume ./application-authoring --json
@@ -315,34 +364,39 @@ radpack create --resume ./application-authoring --json --approve <review-sha>
 ```
 
 Starting with a URL clones and records the workflow. JSON or redirected callers
-receive `awaiting-fork-approval` when setup needs consent,
+receive `awaiting-repository-approval` when independent setup needs consent
+(`awaiting-fork-approval` for the optional fork flow),
 `awaiting-github-access` when a source-mode permission check is unavailable, or
 `awaiting-radification` when the explicitly selected source is suitable or setup
-was skipped. Fork API failures return `blocked` with a diagnostic.
-No noninteractive invocation silently approves a fork. This is true even when
+was skipped. Repository API failures return `blocked` with a diagnostic.
+No noninteractive invocation silently approves creation or publication. This is true even when
 upstream already contains a Radius model. `--dry-run`, `--approve`, `--source`,
 and `--upstream` cannot be combined with a starting URL; use them on the
 appropriate resume or ordinary checkout flow. This keeps `--dry-run` from
 unexpectedly cloning files and keeps pack-save approval separate from starting
 an authoring checkout.
 
-`--fork-approve` is accepted only on resume and must match the displayed fork
-review hash. It cannot be combined with `--approve`, `--dry-run`, or `--status`.
-`--approve` authorizes only the pack save and never approves a fork. An agent
-must explain the fork's public visibility and remote changes before obtaining
-the user's approval. Interrupted or uncertain fork operations keep their journal
-and do not send a second creation request blindly.
+`--repository-approve` and `--fork-approve` are accepted only on resume and must
+match their respective reviews. They cannot be combined with each other or
+`--approve`, `--dry-run`, or `--status`. `--approve` authorizes only the pack save.
+An agent must explain the destination, visibility, source publication, Actions
+policy, and local branch/remote changes before obtaining the user's approval.
+Interrupted operations keep their journal. A lost repository-creation response
+without a confirmed repository ID requires manual inspection; a matching name
+alone is not permission to claim it. A lost push response is reconciled against
+the exact recorded remote commit; conflicting refs are never overwritten.
 
 Workflow reports identify the source, baseline, selected worktree, output,
 resume arguments, and `repositorySetup` review/status. They distinguish
-`awaiting-deployment-choice`, `awaiting-github-access`, `awaiting-fork-approval`,
+`awaiting-deployment-choice`, `awaiting-github-access`, `awaiting-repository-approval`, `awaiting-fork-approval`,
 `awaiting-radification`,
 `awaiting-worktree-selection`, `ready-for-review` (status inspection only),
 `saved`, and `blocked`. Once resume enters the actual review, it returns the
 existing create report with `awaiting-review`, readiness findings, and approval
-hash. Credentials are not inspected, and publication and deployment remain
-`not-performed`; a Git access failure is not automatically labeled a credential
-problem.
+hash. `repositorySetup.sourcePublication` reports `not-performed`, `unconfirmed`,
+or `confirmed` for initial snapshot publication. The top-level `publication`
+still describes pack publication, not this source push, and remains
+`not-performed`. Cloud credentials and deployment are not inspected or run.
 
 ## Review an existing prepared checkout
 
@@ -934,8 +988,8 @@ build behavior still need review.
 
 | Command | Purpose | Options |
 | --- | --- | --- |
-| `create <GitHub URL>` | Clone, review a personal fork by default, and pause for Radification | `--directory`, `--output`, optional `--base`, `--name`, asset/recipe selections, `--fork`, `--no-fork` or `--use-source`, `--fork-name`, `--json` |
-| `create --resume <checkout>` | Continue a recorded authoring workflow | `--source <linked-worktree>`, `--status`, `--fork-approve`, review/save options, `--json` |
+| `create <GitHub URL>` | Clone, review a private snapshot repository, and pause for Radification | `--directory`, `--output`, `--repository`, `--public`, optional `--base`, asset selections, `--independent`, `--fork`, `--no-fork` or `--use-source`, `--json` |
+| `create --resume <checkout>` | Continue a recorded authoring workflow | `--source <linked-worktree>`, `--status`, `--repository-approve` or `--fork-approve`, review/save options, `--json` |
 | `create` | Review and save a prepared application's pack | `--source`, `--output`, `--upstream`, `--base`, `--name`, repeated `--include`, `--recipe`, `--recipe-pack`, `--radius-version`, `--dry-run`, `--approve` |
 | `create --json` | Agent-readable preview or approved save | Same options; never prompts |
 | `inspect <pack-directory>` | Validate and display a portable pack | Local pack directory |
@@ -957,7 +1011,7 @@ status does not mean the model is ready to deploy.
 | --- | --- |
 | No Radpack found | Supply `--pack` or add an in-repository descriptor. The bundled catalog is empty. |
 | Source repository or baseline is ambiguous | Choose interactively, or pass `--upstream` and/or `--base`. |
-| Source-mode or older URL-create cannot verify GitHub administration | Resume with `--fork` for the fork-first path, fix the selected `gh` login/access, or use `--no-fork` for local work. |
+| Source-mode or older URL-create cannot verify GitHub administration | Resume with `--independent` before a fork binding exists, fix selected `gh` access, or use `--no-fork` for local work. |
 | Authoring has multiple worktrees | Resume with the worktree path or specify `--source`; choose the checkout containing the Radius edits. |
 | Authoring review is active or interrupted | Check the process and output before removing its Git-local `review.lock`. Do not reset the prepared checkout. |
 | Source commit cannot be fetched | Check access and whether that commit is available from the intended repository. Raw Git diagnostics are withheld to avoid leaking credentials. |
@@ -1000,6 +1054,7 @@ verification is skipped on Windows.
 | `internal/radpack/authoring.go` | URL-first clone, Git-local authoring record, resume and progress |
 | `internal/radpack/authoring_deployment.go` | Guided deployment choice within create and separate fork approval |
 | `internal/radpack/fork.go` | Reviewed personal fork creation/reuse and recovery |
+| `internal/radpack/repository_setup.go` | Reviewed independent snapshot publication, Actions guard, and recovery |
 | `internal/radpack/deployment.go` | Separate local application/deployment identities |
 | `internal/radpack/github_api.go` | Bounded GitHub API calls through the selected `gh` credential |
 | `internal/radpack/build_sources.go` | Source-state checks and build warnings |

@@ -14,18 +14,24 @@ const deploymentBindingFile = "radpack-deployment.json"
 // Deployment identity is local to the clone, shared by its worktrees, and never
 // part of a portable pack. Status is persisted before any remote mutation.
 type deploymentBinding struct {
-	FormatVersion     int      `json:"formatVersion"`
-	CommonDirectory   string   `json:"commonDirectory"`
-	Application       Upstream `json:"application"`
-	Repository        string   `json:"repository"`
-	Account           string   `json:"account"`
-	AccountID         int64    `json:"accountId"`
-	RepositoryID      int64    `json:"repositoryId"`
-	Status            string   `json:"status"`
-	ReviewSHA256      string   `json:"reviewSha256"`
-	OriginalOrigin    string   `json:"originalOrigin"`
-	OriginalUpstream  string   `json:"originalUpstream"`
-	CreationAttempted bool     `json:"creationAttempted"`
+	FormatVersion     int               `json:"formatVersion"`
+	CommonDirectory   string            `json:"commonDirectory"`
+	Application       Upstream          `json:"application"`
+	Repository        string            `json:"repository"`
+	Account           string            `json:"account"`
+	AccountID         int64             `json:"accountId"`
+	RepositoryID      int64             `json:"repositoryId"`
+	Status            string            `json:"status"`
+	ReviewSHA256      string            `json:"reviewSha256"`
+	OriginalOrigin    string            `json:"originalOrigin"`
+	OriginalUpstream  string            `json:"originalUpstream"`
+	CreationAttempted bool              `json:"creationAttempted"`
+	Kind              string            `json:"kind,omitempty"`
+	Private           bool              `json:"private,omitempty"`
+	SnapshotCommit    string            `json:"snapshotCommit,omitempty"`
+	SnapshotTree      string            `json:"snapshotTree,omitempty"`
+	PushAttempted     bool              `json:"pushAttempted,omitempty"`
+	PublicationReview *RepositoryReview `json:"publicationReview,omitempty"`
 }
 
 func readDeploymentBinding(ctx context.Context, root string) (*deploymentBinding, error) {
@@ -56,7 +62,26 @@ func readDeploymentBinding(ctx context.Context, root string) (*deploymentBinding
 	if err != nil || destination != binding.Repository ||
 		!strings.EqualFold(strings.Split(strings.TrimPrefix(destination, "https://github.com/"), "/")[0], binding.Account) ||
 		strings.EqualFold(destination, upstream) || (binding.Status == "ready" && binding.RepositoryID <= 0) {
-		return nil, fmt.Errorf("invalid personal deployment fork identity")
+		return nil, fmt.Errorf("invalid personal deployment repository identity")
+	}
+	if binding.Kind != "" && binding.Kind != "independent" {
+		return nil, fmt.Errorf("unknown deployment repository kind")
+	}
+	if binding.Kind == "independent" {
+		r := binding.PublicationReview
+		if r == nil || !commitPattern.MatchString(binding.SnapshotTree) ||
+			(binding.SnapshotCommit != "" && !commitPattern.MatchString(binding.SnapshotCommit)) ||
+			(binding.Status == "ready" && binding.SnapshotCommit == "") ||
+			r.Repository != binding.Repository || r.Application != binding.Application ||
+			r.Tree != binding.SnapshotTree || r.Private != binding.Private ||
+			r.Account.ID != binding.AccountID || r.Account.Login != binding.Account || r.CommonDirectory != common ||
+			r.Branch != authoringBranch || !commitPattern.MatchString(r.LocalHead) || r.LocalBranch == "" {
+			return nil, fmt.Errorf("invalid independent repository publication journal")
+		}
+		digest, err := repositoryReviewHash(*r)
+		if err != nil || digest != binding.ReviewSHA256 {
+			return nil, fmt.Errorf("independent repository approval journal changed")
+		}
 	}
 	original, err := repositoryURL(binding.OriginalOrigin)
 	if err != nil || original != upstream {
@@ -151,10 +176,10 @@ func validateDeploymentRemotes(ctx context.Context, root string, binding *deploy
 	}
 	upstream, err := repositoryURL(remotes.Upstream)
 	if err != nil {
-		return fmt.Errorf("deployment fork requires the original application repository as upstream")
+		return fmt.Errorf("deployment repository requires the original application repository as upstream")
 	}
 	if binding.Status != "ready" {
-		return fmt.Errorf("deployment fork setup is incomplete; resume radpack fork before continuing")
+		return fmt.Errorf("deployment repository setup is incomplete; resume the recorded setup before continuing")
 	}
 	if origin != binding.Repository || upstream != binding.Application.Repository {
 		return fmt.Errorf("Git remotes differ from the approved deployment repository binding")
